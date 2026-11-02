@@ -1,0 +1,15 @@
+# 统一换行符为 LF。Windows 上不统一会让每次 checkout 都产生整文件 diff，
+# 也会让 Docker 镜像里的 shell 脚本因为 CRLF 而无法执行。
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+
+# 锁文件不做 diff 展示，但它们必须入库
+pnpm-lock.yaml -diff linguist-generated
