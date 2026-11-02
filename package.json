@@ -1,0 +1,22 @@
+{
+  "name": "ticket-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "db:up": "docker compose up -d postgres redis",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d postgres redis",
+    "db:logs": "docker compose logs -f postgres",
+    "db:psql": "docker compose exec postgres psql -U ${POSTGRES_USER:-ticket} -d ${POSTGRES_DB:-ticket_dev} -c \"select version();\"",
+    "db:redis": "docker compose exec redis redis-cli ping",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "lint": "pnpm -r --if-present lint",
+    "build": "pnpm -r --if-present build",
+    "test": "pnpm -r --if-present test"
+  }
+}

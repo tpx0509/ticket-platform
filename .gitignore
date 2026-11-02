@@ -1,0 +1,41 @@
+# 依赖
+node_modules/
+.pnpm-store/
+
+# 构建产物
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# 环境变量：只提交模板
+.env
+.env.*
+!.env.example
+
+# 日志与临时文件
+*.log
+logs/
+tmp/
+.tmp/
+coverage/
+
+# 编辑器与系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# 本地数据卷与上传
+.data/
+uploads/
+
+# Prisma 生成的客户端
+**/generated/prisma/
+
+# 证书（由 certbot 在服务器上生成，不入库）
+infra/nginx/certs/
+*.pem

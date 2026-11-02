@@ -1,0 +1,69 @@
+# 本地与单机环境的基础设施。应用进程跑在宿主机上（便于热重载），
+# 只有有状态服务进容器。生产部署用 infra/docker/docker-compose.prod.yml。
+name: ticket-platform
+
+services:
+  postgres:
+    # 官方 pgvector 镜像 = PostgreSQL 16 + vector 扩展预编译
+    image: pgvector/pgvector:pg16
+    container_name: td-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ticket}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devlocal123}
+      POSTGRES_DB: ${POSTGRES_DB:-ticket_dev}
+      # 初始化时使用的编码与时区，避免中文排序异常
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: Asia/Shanghai
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 只在数据卷为空时执行，用于装扩展、建只读角色
+      - ./infra/docker/init:/docker-entrypoint-initdb.d:ro
+    command:
+      - postgres
+      # 慢查询日志：超过 200ms 记一条，开发期就能发现 N+1 和缺索引
+      - -c
+      - log_min_duration_statement=200
+      - -c
+      - log_line_prefix=%m [%p] %u@%d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ticket} -d ${POSTGRES_DB:-ticket_dev}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: td-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # 数据库可视化，仅开发期启用（profile 控制，生产不会启动）
+  adminer:
+    image: adminer:4
+    container_name: td-adminer
+    restart: unless-stopped
+    profiles: ["tools"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+
+volumes:
+  pgdata:
+  redisdata:
