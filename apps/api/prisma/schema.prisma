@@ -1,0 +1,269 @@
+// 数据模型以 docs/erd.md 为唯一契约来源。
+// 这里的字段顺序、索引顺序、级联行为都必须与文档一致；
+// 改结构只有一条路：改本文件 -> 生成迁移 -> 提交迁移文件。
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  // Prisma 7 起连接串不再写在 schema 里，统一由 prisma.config.ts 提供；
+  // 应用侧走驱动适配器（见 infra/prisma/prisma.service.ts）。
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------- 身份与组织
+
+model Organization {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  slug      String   @unique
+  plan      String   @default("free")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships Membership[]
+  tickets     Ticket[]
+  comments    TicketComment[]
+  events      TicketEvent[]
+  attachments Attachment[]
+  articles    KbArticle[]
+  chunks      KbChunk[]
+  aiRuns      AiRun[]
+
+  @@map("organizations")
+}
+
+model User {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email           String    @unique
+  passwordHash    String    @map("password_hash")
+  name            String
+  avatarUrl       String?   @map("avatar_url")
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships        Membership[]  @relation("MembershipUser")
+  invitedMemberships Membership[]  @relation("MembershipInviter")
+  refreshTokens      RefreshToken[]
+  requestedTickets   Ticket[]      @relation("TicketRequester")
+  assignedTickets    Ticket[]      @relation("TicketAssignee")
+  comments           TicketComment[]
+  events             TicketEvent[]
+  attachments        Attachment[]
+  articles           KbArticle[]
+
+  @@map("users")
+}
+
+model Membership {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId       String    @map("org_id") @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  role        String    @default("viewer")
+  status      String    @default("invited")
+  invitedById String?   @map("invited_by") @db.Uuid
+  joinedAt    DateTime? @map("joined_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User         @relation("MembershipUser", fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy    User?        @relation("MembershipInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  // 同一人在同一组织内只能有一条关系；前导列是 org_id，故另建 user_id 反向索引
+  @@unique([orgId, userId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model RefreshToken {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  tokenHash    String    @unique @map("token_hash")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(6)
+  replacedById String?   @map("replaced_by_id") @db.Uuid
+  userAgent    String?   @map("user_agent")
+  ip           String?   @db.Inet
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("refresh_tokens")
+}
+
+// -------------------------------------------------------------------- 工单域
+
+model Ticket {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId           String    @map("org_id") @db.Uuid
+  number          Int
+  subject         String
+  description     String
+  status          String    @default("open")
+  priority        String    @default("normal")
+  category        String?
+  requesterId     String    @map("requester_id") @db.Uuid
+  assigneeId      String?   @map("assignee_id") @db.Uuid
+  source          String    @default("web")
+  firstResponseAt DateTime? @map("first_response_at") @db.Timestamptz(6)
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(6)
+  closedAt        DateTime? @map("closed_at") @db.Timestamptz(6)
+  aiCategory      String?   @map("ai_category")
+  aiConfidence    Decimal?  @map("ai_confidence") @db.Decimal(4, 3)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  requester    User            @relation("TicketRequester", fields: [requesterId], references: [id], onDelete: Restrict)
+  assignee     User?           @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  comments     TicketComment[]
+  events       TicketEvent[]
+  attachments  Attachment[]
+
+  // 列表页主查询：某组织某状态按时间倒序
+  @@index([orgId, status, createdAt(sort: Desc)])
+  // 工作台首屏：我的工单
+  @@index([orgId, assigneeId, status])
+  // 组织内编号唯一，同时支撑按编号直达
+  @@unique([orgId, number])
+  // 统计与导出
+  @@index([orgId, createdAt(sort: Desc)])
+  @@map("tickets")
+}
+
+model TicketComment {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId      String   @map("org_id") @db.Uuid
+  ticketId   String   @map("ticket_id") @db.Uuid
+  authorId   String   @map("author_id") @db.Uuid
+  body       String
+  isInternal Boolean  @default(false) @map("is_internal")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  ticket       Ticket       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author       User         @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  attachments  Attachment[]
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_comments")
+}
+
+// 审计表：只追加。数据库层用触发器拦截 UPDATE / DELETE（见补充迁移）。
+model TicketEvent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  ticketId  String   @map("ticket_id") @db.Uuid
+  actorId   String?  @map("actor_id") @db.Uuid
+  type      String
+  fromValue String?  @map("from_value")
+  toValue   String?  @map("to_value")
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  // 审计记录不随工单物理删除：RESTRICT 会挡住删除，逼着业务走软删除。
+  // 与"只追加、可追溯"的目标一致，级联删除会把审计一起抹掉，等于没有审计。
+  ticket       Ticket       @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  actor        User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@index([orgId, type, createdAt])
+  @@map("ticket_events")
+}
+
+model Attachment {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId      String   @map("org_id") @db.Uuid
+  ticketId   String?  @map("ticket_id") @db.Uuid
+  commentId  String?  @map("comment_id") @db.Uuid
+  uploaderId String   @map("uploader_id") @db.Uuid
+  fileName   String   @map("file_name")
+  mimeType   String   @map("mime_type")
+  size       BigInt
+  storageKey String   @map("storage_key")
+  checksum   String
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  ticket       Ticket?        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  comment      TicketComment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  uploader     User           @relation(fields: [uploaderId], references: [id], onDelete: Restrict)
+
+  @@index([orgId, ticketId])
+  @@map("attachments")
+}
+
+// ---------------------------------------------------------------- 知识与模型
+
+model KbArticle {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId     String    @map("org_id") @db.Uuid
+  title     String
+  content   String
+  status    String    @default("draft")
+  authorId  String    @map("author_id") @db.Uuid
+  indexedAt DateTime? @map("indexed_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  author       User         @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  chunks       KbChunk[]
+
+  @@index([orgId, status, updatedAt(sort: Desc)])
+  @@map("kb_articles")
+}
+
+model KbChunk {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // org_id 冗余：检索直接按它过滤，避免为了判租户而 JOIN kb_articles
+  orgId      String   @map("org_id") @db.Uuid
+  articleId  String   @map("article_id") @db.Uuid
+  seq        Int
+  content    String
+  tokenCount Int      @map("token_count")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Prisma 无法表达 pgvector 类型，声明为 Unsupported 后该字段不进 client。
+  // 读写向量的地方一律走 $queryRaw / $executeRaw。
+  embedding Unsupported("vector(1024)")?
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  article      KbArticle    @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, seq])
+  @@index([orgId, articleId])
+  @@map("kb_chunks")
+}
+
+model AiRun {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId            String   @map("org_id") @db.Uuid
+  kind             String
+  model            String
+  status           String
+  promptTokens     Int      @default(0) @map("prompt_tokens")
+  completionTokens Int      @default(0) @map("completion_tokens")
+  // 成本用整数微元（1 元 = 1_000_000），浮点累加会漂移
+  costMicros       Int      @default(0) @map("cost_micros")
+  latencyMs        Int      @default(0) @map("latency_ms")
+  error            String?
+  refType          String?  @map("ref_type")
+  refId            String?  @map("ref_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt(sort: Desc)])
+  @@index([kind, status])
+  @@map("ai_runs")
+}
