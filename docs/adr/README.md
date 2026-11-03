@@ -10,6 +10,7 @@
 | [0002](0002-multi-tenancy-row-level.md) | 多租户行级隔离 + RLS | 已采纳 |
 | [0003](0003-auth-jwt-with-refresh.md) | 短效 JWT + 可吊销 refresh | 已采纳 |
 | [0004](0004-orm-strategy.md) | Prisma 与原生 SQL 双轨 | 已采纳 |
+| [0005](0005-text-check-over-citext-and-enum.md) | 枚举用 text + CHECK，大小写不敏感靠归一化 | 已采纳 |
 
 ## 新增 ADR 的规则
 

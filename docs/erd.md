@@ -152,7 +152,7 @@ erDiagram
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `id` | uuid PK | |
-| `email` | citext UK | 用 `citext` 而不是 `text`，`Foo@x.com` 与 `foo@x.com` 视为同一账号 |
+| `email` | text UK | 写入前统一转小写，并用 `CHECK (email = lower(email))` 钉死。放弃 `citext`：Prisma 无法表达该类型，`@unique` 会与库里的实际类型产生漂移（见 ADR-0005） |
 | `password_hash` | text | argon2id。库中永不出现明文或可逆密文 |
 | `name` | text | 显示名 |
 | `avatar_url` | text? | |
@@ -263,7 +263,7 @@ erDiagram
 |---|---|---|
 | `id` | uuid PK | |
 | `org_id` | uuid FK | |
-| `ticket_id` | uuid FK → tickets | 级联删除 |
+| `ticket_id` | uuid FK → tickets | RESTRICT：审计记录不能被工单的级联删除带走 |
 | `actor_id` | uuid? | 操作人，系统自动变更为 null |
 | `type` | text | `created` / `status_changed` / `assigned` / `priority_changed` / `commented` / `attachment_added` |
 | `from_value` | text? | 变更前 |
@@ -274,6 +274,7 @@ erDiagram
 - 索引：`(ticket_id, created_at)`。详情页时间线一次查出。
 - 索引：`(org_id, type, created_at)`。支撑"本周解决率"这类统计。
 - **只追加，不修改不删除。** 审计表的价值在于不可篡改。应用层不提供任何更新或删除该表的接口，数据库层面用触发器拦截 UPDATE / DELETE。
+- **外键是 RESTRICT 而不是 CASCADE。** 级联删除会把审计记录一并抹掉，等于没有审计。代价是工单不能物理删除，必须走 `deleted_at` 软删除——这本来就是设计要求。
 
 ### attachments
 
