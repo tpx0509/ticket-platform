@@ -1,8 +1,10 @@
 # SQL 基础与查询规范
 
-面向本项目的日常查询速查。所有示例都在 `ticket_dev` 库上实跑验证过，报错信息是从真实会话里抄的。
+面向本项目的日常查询与索引速查。所有示例都在 `ticket_dev` 库上实跑验证过，报错信息是从真实会话里抄的。
 
 连接方式见 `docs/dev-setup.md`。库里的表结构见 `docs/erd.md`。
+
+第十章的实验表（`perf_demo` / `hash_demo` / `wt_plain` / `wt_indexed`）只用于演示，可以随时删掉，不参与业务。
 
 ## 一、执行顺序
 
@@ -312,3 +314,298 @@ select * from tickets where org_id = $1 and deleted_at is null;
 | `left join` 结果 200 行没筛出任何东西 | 条件写在 `on` 里了 | 条件挪到 `where` |
 | 分组后"最多"变成了 6 而实际最多 3 | 按 `number` 分组，跨组织的同号工单被合并 | 按主键 `t.id` 分组 |
 | `having count(*) > 5` 一条没筛掉 | 阈值比所有组都小 | 换个能筛掉数据的阈值验证 |
+
+## 十、索引与执行计划
+
+这一章的例子跑在实验表 `perf_demo`（10 万行）和真实的 `tickets` 上。实验表可以随便删，不影响项目。
+
+### 索引是什么
+
+索引是一份额外的、**排好序的目录**，每条记录只存两样东西：**键值** + **这一行在表里的物理位置（`ctid`）**。
+
+它不存整行数据。所以查到位置之后，还得按 `ctid` 去表里把那行捞出来——这一步叫**回表**。
+
+排好序才有意义：有序才能二分，一次排除一半。10 万行只需比较十几次。
+
+**B+ 树**就是 PostgreSQL 默认的索引结构（`btree`）。三个特征：
+
+- 每个节点大小对齐一个磁盘页（8KB），一个节点能装几百个键，所以树很矮——10 万行只有 3 层
+- 内部节点只存「路标 + 子页号」，数据全在叶子层
+- 叶子层之间用链表串起来，范围查询顺着走
+
+层数就是**磁盘随机读的次数**。二叉树 17 层 = 17 次 I/O，B+ 树 3 层 = 3 次，这就是它存在的全部理由。
+
+真实效果（`perf_demo`，10 万行）：
+
+| 情况 | 计划 | 耗时 |
+|---|---|---|
+| 无索引 | Seq Scan，`Rows Removed by Filter: 99999` | 7.504ms |
+| 有索引 | Index Scan | 0.091ms |
+
+### 把索引页拆开看
+
+PostgreSQL 带一个检查工具，可以直接读磁盘上的索引页：
+
+```sql
+create extension if not exists pageinspect;
+
+-- 索引一共多少页
+select pg_relation_size('perf_demo_email_idx')/8192;   -- 499
+
+-- 找内部节点（btpo_level > 0 的）
+select s.blkno as 页号, b.btpo_level as 层级, b.live_items as 条目数
+from generate_series(1,498) s(blkno)
+cross join lateral bt_page_stats('perf_demo_email_idx', s.blkno) b
+where b.btpo_level > 0 order by 2 desc;
+```
+
+```
+页号 | 层级 | 条目数
+ 164 |   2  |    4      ← 根
+   3 |   1  |  159      ← 中间层
+ 163 |   1  |  159
+ 323 |   1  |  159
+ 482 |   1  |   19
+```
+
+根页只有 4 条，内容长这样：
+
+| 序号 | 指向 | 键值 |
+|---|---|---|
+| 1 | 子页 3 | （空，负无穷） |
+| 2 | 子页 163 | user38869@example.com |
+| 3 | 子页 323 | user67735@example.com |
+| 4 | 子页 482 | user96601@example.com |
+
+**一条行数据都没有**，全是「边界值 + 子页号」。查 `user50000` 时比一下就知道该去第 323 页。
+
+叶子页才是真货，`ctid` 变成表的物理地址：
+
+```
+序号 | 表里的位置 | 键值
+  2  | (934,59)   | user100000@example.com
+  3  | (93,46)    | user10000@example.com
+  4  | (93,47)    | user10001@example.com
+```
+
+同一个叶子页里，行位置从第 934 页跳到第 93 页——**索引有序不代表表有序**。这就是回表必须随机 I/O 的原因。
+
+`itemoffset = 1` 那条是 high key（本页所有键的上界），不是真实数据，查的时候跳过。
+
+### 看执行计划
+
+```sql
+explain select ...          -- 只出计划，不执行
+explain analyze select ...  -- 真跑一遍，带实际耗时
+```
+
+`delete` / `update` 别随手加 `analyze`，那是真执行。
+
+两个概念要分清：
+
+- `cost` 是**相对单位**，不是毫秒。读一个页记 1.0，随机页 4.0，处理一行记 0.01。用来看「优化器觉得哪个更划算」，别看绝对值。
+- `Filter` 和 `Index Cond` 的区别就是快在哪的答案。`Index Cond` 里的条件用索引定位了，`Filter` 里的只是捞出来再筛。
+
+`Rows Removed by Filter` 越大，说明白读的行越多。
+
+三种扫描方式：
+
+| 方式 | 什么时候选 | 特点 |
+|---|---|---|
+| `Seq Scan` | 要的行占比高、表小 | 从头读到尾 |
+| `Index Scan` | 只要少量行 | 按索引顺序逐行，**能省掉 order by** |
+| `Bitmap Index Scan` | 几千到几万行 | 先收集行位置按页排序，再顺序回表；省随机 I/O，但**顺序被打乱** |
+
+实测 `where status = 'open'`（占 25%）：
+
+```
+Bitmap Heap Scan + Bitmap Index Scan   3.162ms
+关掉 bitmapscan → Seq Scan             5.946ms
+```
+
+只快 1.9 倍，不是几十倍。因为表小、页都在内存里。索引的威力在「只要几行」时才炸开。
+
+### 复合索引与最左前缀
+
+索引 `(a, b)` **不是**「a 的索引 + b 的索引」，是一本「先按 a 排，a 相同的再按 b 排」的字典。跟电话簿一样：能按姓查，能按「姓 + 名」查，不能只按名查。
+
+实测 `perf_demo_status_created_idx (status, created_at)`：
+
+| 查询 | 计划 | 耗时 |
+|---|---|---|
+| `status=? and created_at>?` | Index Scan，两列都在 `Index Cond` | 0.114ms |
+| `created_at>? and status=?`（反过来写） | 同一个索引，两列都在 `Index Cond` | 0.077ms |
+| **只写 `created_at>?`** | **Seq Scan** | 5.449ms |
+
+三条结论：
+
+1. **`where` 里条件的书写顺序完全不影响**，优化器自己重排。决定的是索引定义时的列顺序。
+2. 只给第二列，索引彻底用不上。
+3. **范围条件会截断它右边的列**。`(a, b)` 遇上 `a > 1 and b = 2`，`b` 只能掉进 `Filter`。
+
+所以列顺序的原则：**等值条件在前，范围/排序列在后，中间不能夹列**。
+
+### 索引顺序与 order by
+
+索引的物理顺序如果和 `order by` 一致，排序这一步直接消失。
+
+`tickets` 上的实测（列表页：按组织 + 状态筛，时间倒序取 20 条）：
+
+| 计划 | 耗时 |
+|---|---|
+| Seq Scan + `Sort` | 0.166ms |
+| Bitmap Index Scan + `Sort` | 1.389ms |
+| Index Scan，**没有 Sort** | 0.101ms |
+
+第二种为什么还要排序？因为 bitmap 按物理页号回表，顺序被打乱了。**能省随机 I/O 的代价，就是丢掉索引顺序。**
+
+`Index Scan` 顺着索引读，读到第 20 行就停，`order by ... limit 20` 变成「读前 20 个叶子项」。
+
+另外，**升序索引也能服务 `desc`**：
+
+```
+Index Scan Backward using perf_demo_status_created_idx
+```
+
+所以 `(org_id, status, created_at)` 和 `(org_id, status, created_at desc)` 对 `order by created_at desc` 效果一样。`DESC` 只有在**混合排序**（一列升一列降）时才是必须的。
+
+### 回表与覆盖索引
+
+索引只有「索引列 + ctid」，查的列不全在索引里就得回表。
+
+| 查询 | 计划 | cost |
+|---|---|---|
+| `select *` | Index Scan | 8.44 |
+| `select email` | Index Only Scan，`Heap Fetches: 0` | 4.44 |
+| `select email, status` | Index Scan | 8.44 |
+
+回表让成本翻倍。要把列加进索引：
+
+```sql
+create index perf_demo_cover_idx on perf_demo (email) include (status);
+```
+
+`include` 的列存在叶子层，不参与排序，所以索引不会变高。这叫**覆盖索引**——不是一种索引类型，而是「索引覆盖了这条查询」的关系。同一个索引，对这条查询是覆盖索引，对那条不是。
+
+判定方法：把 `select` 要的列和 `where` / `order by` / `group by` 用到的列凑一起，看是不是全在索引里。
+
+**坑：`Index Only Scan` 不保证真的不回表。**
+
+```sql
+update perf_demo set status = status where email = 'user88888@example.com';
+explain analyze select email from perf_demo where email = 'user88888@example.com';
+-- Heap Fetches: 2
+```
+
+因为可见性映射脏了，PG 不敢直接信索引里的行位置。跑一次 `vacuum perf_demo`，回到 `0`。这也解释了为什么大批量导入后查询会突然变慢，autovacuum 还没跟上。
+
+### 索引失效的场景
+
+分三类，性质不同。
+
+**一、结构上就用不了**（改写法能救）
+
+- 列被函数包住：`where lower(email) = ?`。索引存的是原文，对不上。要用就建表达式索引 `create index on t (lower(email))`。
+- 复合索引缺最左列。
+- 前后都加通配：`like '%88888@example.com'`。
+
+**二、优化器算完觉得不划算**（改写法救不了）
+
+- `!=`、`not in`、`is not null`：要返回绝大多数行，走索引反而更贵。
+- 表太小：`tickets` 200 行，全表扫 0.166ms，比索引还快。
+- 统计信息过期：跑 `analyze 表名`。
+
+**三、写法导致**
+
+- `or` 只要有一边没索引，整体退化。
+
+实测数据：
+
+| 写法 | 计划 | 耗时 |
+|---|---|---|
+| `email != 'x'` | Seq Scan | 14.944ms |
+| `a = 1 or b > x`（b 无索引） | Seq Scan | 7.040ms |
+| `a = 1 or b = 2`（两边都有索引） | `BitmapOr` | 4.600ms |
+| `like 'user88888%'` | **Index Scan** | 0.032ms |
+| `like '%88888@example.com'` | Seq Scan | 7.706ms |
+
+注意第四行：**前缀通配是能走索引的**，PG 把它改写成了范围条件：
+
+```
+Index Cond: (email >= 'user88888' AND email < 'user88889')
+```
+
+只有前面也带 `%` 才真的废——没法确定起点。
+
+面试时说 **「优化器没选索引」** 比说「索引失效」准确。大部分情况不是不能用，是它算过觉得不划算。
+
+### 索引的代价
+
+空间：`perf_demo` 表本体 7.5 MB，5 个索引加起来 15 MB。索引比表大是常态。
+
+写入：同样插 5 万行
+
+| 情况 | 耗时 |
+|---|---|
+| 只有主键 | 124.9 ms |
+| 加 4 个索引 | 468.2 ms |
+
+慢 3.7 倍。每插一行，4 棵 B+ 树都要插一条、维护顺序、写 WAL。`update` 改了索引列的话更贵，旧条目标记删除、新条目插入。
+
+三种不该建索引的情况：
+
+- **小表**：几十万行以下，全表扫往往更快
+- **低区分度**：`status` 只有 4 个值，单独建索引要扫 25% 的行再回表，不如全表扫。它只有在复合索引里当前缀才有价值
+- **写多读少**：日志、事件、埋点表
+
+判断一个索引该不该存在：**看它能不能让某条具体查询既不回表、又不排序。** 一堆列堆上去没用，得跟查询的形状对上。
+
+### 本项目现有索引
+
+`tickets` 七个索引，各有明确的服务对象：
+
+```sql
+tickets_org_id_status_created_at_idx  (org_id, status, created_at DESC)
+tickets_org_id_created_at_idx         (org_id, created_at DESC)
+tickets_org_id_assignee_id_status_idx (org_id, assignee_id, status)
+tickets_org_id_number_key             (org_id, number)        -- 唯一约束
+tickets_pkey                          (id)
+tickets_fts_idx                       gin 全文（subject + description）
+tickets_subject_trgm_idx              gin 三元组（模糊匹配 subject）
+```
+
+前两个看起来像，其实不能互相替代：第一个的 `status` 卡在中间，**不筛状态时它的排序用不上**，所以第二个必须留。
+
+实测对比（`perf_demo`，只按时间倒序取 20 条）：
+
+| 索引情况 | 计划 | 耗时 |
+|---|---|---|
+| 只有 `(status, created_at)` | Seq Scan + Sort（排 10 万行） | 15.795ms |
+| 加上 `(created_at DESC)` | Index Scan，无 Sort | 0.137ms |
+
+定义在 `apps/api/prisma/schema.prisma` 的 `@@index`，别手敲 SQL 建，否则下次生成迁移会对不上。
+
+查哪些索引从来没被用过：
+
+```sql
+select indexrelname as 索引, idx_scan as 被用次数,
+       pg_size_pretty(pg_relation_size(indexrelid)) as 大小
+from pg_stat_user_indexes
+where relname = 'tickets'
+order by pg_relation_size(indexrelid) desc;
+```
+
+`idx_scan = 0` 且确认业务上也不需要的，可以删。注意统计重启会清零。
+
+### 索引这一节的坑
+
+| 现象 | 原因 | 正确做法 |
+|---|---|---|
+| 建了索引还是 Seq Scan | 要返回的行占比太高，优化器算过觉得不划算 | 看 `Rows Removed by Filter`，不是 bug |
+| `created_at` 单独查走不了复合索引 | 它在 `(status, created_at)` 的第二位 | 单独建一个 `(created_at)`，或调整列顺序 |
+| bitmap 扫描后还是出现 `Sort` | bitmap 按物理页序回表，顺序被打乱 | 要排序就让它走 `Index Scan` |
+| `Index Only Scan` 仍显示 `Heap Fetches: 2` | 刚 update 过，可见性映射脏了 | `vacuum 表名` |
+| `analyze` 前后估算差很多 | 统计信息过期 | 大批量写入后手动 `analyze` |
+| 以为 `like 'x%'` 走不了索引 | 实际能，PG 改写成范围条件 | 只有前后都带 `%` 才真的废 |
+| 加 `DESC` 以为性能更好 | 单列排序时 PG 会反向扫 | 只有混合排序才必须写 `DESC` |
+| 五个索引把写入拖慢 3.7 倍 | 每行要维护五棵 B+ 树 | 只给真实高频查询建 |
