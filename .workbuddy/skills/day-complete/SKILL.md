@@ -29,7 +29,7 @@ agent_created: true
 
 ## 第一步：确认是哪一天
 
-天数编号以桌面清单为准：`D:\desktop\全栈30天冲刺清单.html`，范围 D0–D30，共 31 项。每天标题见 `references/checklist.md`。
+天数编号以桌面清单为准：`D:\desktop\全栈30天冲刺清单.html`，范围 D0–D30，共 31 项。**D0 是准备日，不计入打卡总数，分母固定 30。**每天标题见 `references/checklist.md`。
 
 不要把它和项目的 M1/M2/M3 里程碑编号混用——两套完全不同的东西，对照表在 `references/checklist.md`。
 
@@ -98,7 +98,7 @@ PY="C:/Users/Tian/.workbuddy/binaries/python/envs/default/Scripts/python.exe"
 "$PY" "E:/newProject/ticket-platform/.workbuddy/skills/day-complete/scripts/make_wallpaper.py" \
   --day 5 --title "事务与并发" \
   --next-day 6 --next-title "Node 连库" \
-  --done 4 --total 31 --date "2026-11-06" \
+  --done 4 --total 30 --date "2026-11-06" \
   --out "C:/Users/Tian/AppData/Local/WorkBuddyWallpapers/day-05.png"
 ```
 
@@ -111,7 +111,7 @@ PY="C:/Users/Tian/.workbuddy/binaries/python/envs/default/Scripts/python.exe"
 | `--day` | **即将开始/正在学的那一天**（`last_completed + 1`），不是刚完成的那天 |
 | `--title` | 这一天的标题，取自清单，可精简 |
 | `--next-day` / `--next-title` | `--day + 1`；D30 之后传 `--next-day -1` |
-| `--done` / `--total` | 已完整完成的天数 / 总数，两个数字口径必须一致 |
+| `--done` / `--total` | 已完整完成的天数 / **固定 30**。D0 是准备日不计入，只数 D1–D30 |
 | `--date` | 壁纸上显示的日期，填 `--day` 那天 |
 | `--bg` | 背景图路径，不给则用渐变 |
 | `--out` | 输出路径 |
