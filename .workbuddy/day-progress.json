@@ -1,0 +1,32 @@
+{
+  "last_completed": 4,
+  "days": {
+    "2": {
+      "date": "2026-11-03",
+      "title": "查询基础",
+      "commits": [
+        "f731374",
+        "3af3b3c",
+        "7368907",
+        "13d2e54",
+        "54d2818"
+      ],
+      "wallpaper": "day-02.png"
+    },
+    "3": {
+      "date": "2026-11-04",
+      "title": "进阶查询",
+      "commits": [],
+      "wallpaper": null
+    },
+    "4": {
+      "date": "2026-11-05",
+      "title": "索引与执行计划",
+      "commits": [
+        "0f170dc",
+        "34f77a9"
+      ],
+      "wallpaper": "day-04.png"
+    }
+  }
+}
