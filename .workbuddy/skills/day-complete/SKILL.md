@@ -96,24 +96,29 @@ feat(api): 落地工单查询接口与统一响应信封
 ```bash
 PY="C:/Users/Tian/.workbuddy/binaries/python/envs/default/Scripts/python.exe"
 "$PY" "E:/newProject/ticket-platform/.workbuddy/skills/day-complete/scripts/make_wallpaper.py" \
-  --day 2 --title "查询基础" \
-  --next-day 3 --next-title "进阶查询" \
-  --done 3 --total 31 --date "2026-11-03" \
-  --bg "C:/Users/Tian/AppData/Local/WorkBuddyWallpapers/bg/d02.png" \
-  --out "C:/Users/Tian/AppData/Local/WorkBuddyWallpapers/day-02.png"
+  --day 5 --title "事务与并发" \
+  --next-day 6 --next-title "Node 连库" \
+  --done 4 --total 31 --date "2026-11-06" \
+  --out "C:/Users/Tian/AppData/Local/WorkBuddyWallpapers/day-05.png"
 ```
+
+上面这个命令是 D4 完成后的实际调用：`last_completed` 是 4，所以 `--day` 取 5、`--done` 取 4。`--bg` 参数只是可选背景图，不给就用脚本画的渐变底。
 
 参数说明：
 
 | 参数 | 含义 |
 |---|---|
-| `--day` | 刚完成的天数 |
+| `--day` | **即将开始/正在学的那一天**（`last_completed + 1`），不是刚完成的那天 |
 | `--title` | 这一天的标题，取自清单，可精简 |
-| `--next-day` / `--next-title` | 下一天；若已是 D30，传 `--next-day -1` |
-| `--done` / `--total` | 累计完成天数 / 31（含 D0） |
-| `--date` | 完成日期，`YYYY-MM-DD` |
+| `--next-day` / `--next-title` | `--day + 1`；D30 之后传 `--next-day -1` |
+| `--done` / `--total` | 已完整完成的天数 / 总数，两个数字口径必须一致 |
+| `--date` | 壁纸上显示的日期，填 `--day` 那天 |
 | `--bg` | 背景图路径，不给则用渐变 |
 | `--out` | 输出路径 |
+
+**壁纸的语义（用户 2026-11-06 明确要求）**：它是「接下来干什么」的提示，不是「昨天干完了」的总结。所以 D4 完成之后出的图应该是「第 5 天 + 已完成 4 天 + 明天 D6」，而不是「第 4 天 + 已完成 5 天 + 明天 D5」。
+
+如果 `--day` 那天已经学完（比如深夜补图），照样按 `last_completed + 1` 出，保持和用户预期一致。
 
 `--done` 按台账里实际完成的天数填，不要硬算。
 
