@@ -55,7 +55,15 @@ feat(api): 工单状态流转加入合法性校验
 - 结构变更只有一条路：改 `schema.prisma` → 生成迁移 → 提交迁移文件。不允许手工在数据库里执行 DDL。
 - 迁移文件一旦合并进 `main` 就不再修改。改错了就再加一个迁移改回来。
 - 每个新表必须显式声明索引，尤其是外键列和列表页的查询列。外键不会自动建索引。
-- 查询必须带 `org_id`。这是多租户隔离的底线，代码评审的第一检查项。
+- 查询必须带 `org_id`。这是多租户隔离的第一道，代码评审的第一个检查项。
+- 业务表的读写必须走 `PrismaService.withTenant(orgId, fn)`。数据库侧有 RLS 策略兜底，绕过它直接用 `prisma.ticket.findMany()` 会报错（全新连接是 `unrecognized configuration parameter "app.org_id"`，复用连接是 `invalid input syntax for type uuid: ""`）——**报错就是对的**，说明策略在拦。
+- 两个数据库连接串职责不同，不许混用：
+  - `DATABASE_URL` 给应用运行时，指向受限角色 `ticket_app`（只有 DML，无 DDL，不带 `BYPASSRLS`）；
+  - `DATABASE_URL_MIGRATE` 给 `prisma` CLI、`seed`、`bootstrap` 这类运维场景，指向 owner。
+  - 用 owner 跑应用等于把 RLS 全部关掉，且不报错。`PrismaService` 启动时会检查角色，生产环境发现特权角色直接拒绝启动。
+- 越权一律返回 **404，不是 403**。403 等于确认「这条数据存在，只是不归你」，攻击者能靠它摸出别人的数据轮廓。查不到和不归你，对外表现必须完全一致。
+- 不要让「先查出来再判断 orgId」这种写法出现。租户条件要进查询：`findFirst({ where: { id, orgId } })`，而不是 `findUnique({ where: { id } })` 之后比 `orgId`。
+- 新增带 `org_id` 的表，必须同时补 RLS 策略。权限有 `ALTER DEFAULT PRIVILEGES` 兜底，**策略没有**——漏了这张表就是裸奔。清单见 `enable_tenant_rls` 迁移末尾。
 
 ## 接口
 

@@ -20,8 +20,11 @@ import { PrismaClient } from '../src/generated/prisma/client';
 
 loadEnv();
 
+// 初始化要写第一行数据，且没有租户上下文，只能用 owner 连接串。
 const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
+  adapter: new PrismaPg({
+    connectionString: process.env.DATABASE_URL_MIGRATE || process.env.DATABASE_URL || '',
+  }),
 });
 
 function required(name: string): string {

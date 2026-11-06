@@ -24,6 +24,9 @@ export const envSchema = z
     API_PORT: intFromEnv(4000, 1, 65535),
 
     DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\/\S+$/, '必须是 postgresql:// 连接串'),
+    // 迁移用的 owner 连接串，只有 CLI 和运维脚本需要，应用进程可以不配。
+    DATABASE_URL_MIGRATE: z
+      .preprocess(emptyToUndefined, z.string().regex(/^postgres(ql)?:\/\/\S+$/, '必须是 postgresql:// 连接串').optional()),
     DATABASE_POOL_MAX: intFromEnv(10, 1, 100),
 
     REDIS_URL: z.string().regex(/^rediss?:\/\/\S+$/, '必须是 redis:// 连接串'),

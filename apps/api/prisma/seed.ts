@@ -14,8 +14,12 @@ import { PrismaClient } from '../src/generated/prisma/client';
 
 loadEnv();
 
+// 灌数据要跨组织写，还得 truncate，只能用 owner 连接串。
+// 应用角色 ticket_app 没有 DDL 权限，跑这个脚本会直接 permission denied。
 const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
+  adapter: new PrismaPg({
+    connectionString: process.env.DATABASE_URL_MIGRATE || process.env.DATABASE_URL || '',
+  }),
 });
 
 /** 固定种子的线性同余发生器：每次跑出来的数据完全一样，方便对着截图排查。 */
