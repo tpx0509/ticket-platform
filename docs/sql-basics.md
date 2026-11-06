@@ -911,3 +911,347 @@ where id = ? and org_id = ? and status = 'open';
 | `alter table` 卡死整个业务 | 拿的是 `ACCESS EXCLUSIVE` 锁 | 加字段用 `add column ... default null` 秒完成，索引走 `concurrently` |
 | 死锁随机发生，没法复现 | 两个事务加锁顺序不一致 | 统一按 id 升序加锁，代码里捕获 40P01 重试 |
 | 高并发下乐观锁重试打满数据库 | 冲突率太高，每次都要重做 | 冲突高的场景换悲观锁或原子 `update` |
+
+---
+
+## 十二、从应用侧发 SQL
+
+SQL 写对了只是第一步。同样是这条 SQL，从 Node 里发出去，结果可能是对的、可能是错的、也可能是对的但慢十倍。
+
+### pool.query 和 client 是两种东西
+
+```javascript
+const { rows } = await pool.query('select ...');   // 借一条连接、执行、立刻还回去
+const client = await pool.connect();               // 借一条连接，攥在手里
+```
+
+单条查询用 `pool.query` 没问题。**事务必须用 `client`**，因为事务是「连接级」的状态，而 `pool.query` 每次都可能是不同的连接：
+
+```javascript
+// 错的
+await pool.query('begin');
+await pool.query('update ...');    // 可能落到另一条连接上，等于 autocommit
+await pool.query('commit');
+```
+
+实测在 `begin` 之后用 `pool.query` 查 `txid_current_if_assigned()`，返回 `null`——说明这条查询根本不在事务里。更糟的是那条带着未结束事务的连接会回到池子里，下一个借到它的人继承一个打开的事务。
+
+正确写法，两层 `try` 不能少：
+
+```javascript
+const client = await pool.connect();
+try {
+  await client.query('begin');
+  await client.query('...');
+  await client.query('commit');
+} catch (err) {
+  await client.query('rollback').catch(() => {});   // 连接可能已断，rollback 自己也会失败
+  throw err;                                        // 不 throw，上层永远以为成功了
+} finally {
+  client.release();                                 // 不还，池子会被抽干
+}
+```
+
+外层还要有一层：`pool.connect()` 本身可能失败，那时内层 `try` 根本没进去。所以归还要放内层 `finally`，`pool.end()` 放外层 `finally`。
+
+### 类型会被悄悄改成字符串
+
+`pg` 把 `bigint` 和 `numeric` 一律转成字符串，防精度丢失。所以：
+
+```javascript
+const { rows } = await q('select count(*) from tickets');
+rows[0].count + 1      // '200' + 1 = '2001'  ← 不是 201
+```
+
+两种修法：SQL 里写 `count(*)::int`，或者 JS 里 `Number(...)`。**只要看到 `count` 或者金额字段，就要想到这件事。**
+
+### N+1：一条 SQL 变二十条
+
+工单列表页要 20 张工单 + 每张的评论数。四种写法实测：
+
+| 写法 | SQL 条数 | 耗时 | 说明 |
+|---|---|---|---|
+| N+1：循环里查 | 21 | 22.4ms | 1 条列表 + 20 条计数 |
+| 批量 `in` | 2 | 2.3ms | `where ticket_id = any($1::uuid[])` |
+| `left join` + `group by` | 1 | 1.9ms | |
+| 标量子查询 | 1 | 1.3ms | 子查询写在 select 列表里 |
+
+数据库一点都不慢——50 条评论，全表扫都是微秒级。**21 条花 22ms，全花在网络往返上**，每条 SQL 一个 RTT，叠二十次就是十倍。
+
+```javascript
+// N+1
+for (const t of list) {
+  const { rows } = await q('select count(*)::int as cnt from ticket_comments where ticket_id = $1', [t.id]);
+}
+
+// 批量 in
+const ids = list.map((t) => t.id);
+const { rows: counts } = await q(
+  `select ticket_id, count(*)::int as cnt from ticket_comments
+   where ticket_id = any($1::uuid[]) group by ticket_id`, [ids]);
+const map = new Map(counts.map((r) => [r.ticket_id, r.cnt]));
+list.map((t) => ({ ...t, comment_count: map.get(t.id) ?? 0 }));   // ?? 0 不能省
+```
+
+`any($1::uuid[])` 就是 `in` 的数组版。`in ($1,$2,...$20)` 要拼 20 个占位符，N 一变 SQL 文本就变，预编译复用不了；`any` 只占一个位置。写 `in ('a','b')` 时执行计划里显示的是 `= ANY('{a,b}'::uuid[])`——**PG 内部就是把 `in` 改写成 `any(数组)`**。
+
+`::uuid[]` 不能省。pg 把 JS 数组序列化成 `{a,b,c}` 字符串，不加类型声明 PG 按 `text` 处理，报 `operator does not exist: uuid = text`。
+
+**标量子查询看着只有一条 SQL，其实内部跑了 20 遍。** 执行计划：
+
+```
+SubPlan 1
+  ->  Aggregate (actual rows=1 loops=20)
+        ->  Index Only Scan on ticket_comments (loops=20)
+```
+
+`loops=20` 说明外层每产出一行就跑一次子查询。它跟 N+1 干的是同一件事，只是省掉了网络往返。`limit 20` 卡住外层才有这个效果，**外层一上量它立刻退化**。
+
+判断标准只有一条：**这条查询会被执行多少次**。20 次以内无所谓，一万次就不行。跟它是一条语句还是二十条没关系。
+
+N+1 在真实项目里很少是手写循环，多半是藏起来的：
+
+- **ORM 懒加载**。访问 `ticket.comments` 的那一刻才发 SQL，代码看着干净，跑起来一百条。
+- **序列化时触发**。`res.json()` 遍历字段时碰到 lazy getter。
+- **前端列表每行发一个请求**。浏览器并发只有 6，剩下全排队。
+- **GraphQL 嵌套 resolver**。
+
+土办法很有效：包一个计数器，开发环境下一条请求 SQL 数超过 5 就抛错，问题当场暴露。
+
+### 连接池三个参数
+
+**`max` 管同时开几个。** 10 个并发、每个查 100ms：
+
+| max | 总耗时 | 池状态 |
+|---|---|---|
+| 1 | 1059ms | total=1 idle=1 |
+| 2 | 525ms | total=2 |
+| 5 | 222ms | total=5 |
+| 10 | 135ms | total=10 |
+| 20 | 130ms | **total=10** |
+
+耗时约等于 `ceil(10/max) × 100ms`。注意这**不是数据库慢**，SQL 根本没发出去，在 Node 的队列里等连接——现象是「CPU 不高、DB 不忙、接口就是慢」。
+
+`max=20` 时 `total` 只有 10，说明连接池**懒创建**，`max` 是上限不是预分配。
+
+`max` 配太大的问题在总数。连接池在**每个进程**里，4 个 pod × `max: 20` 就是 80 个连接。硬开实测：
+
+```
+开到第 97 个失败 → [53300] sorry, too many clients already
+```
+
+`max_connections` 是 100，直接报错不是排队，请求全挂。而且每个 PG 连接是个独立进程，占 5-10MB 内存。
+
+算 `max` 看「同一时刻真正在用」，不是看 QPS：`并发 = QPS × 单请求耗时`。QPS 1000、每个请求占连接 5ms，同时在用的只有 5 个。但 QPS 10、每个请求卡 3 秒，并发是 30 个——**慢比多更要命**。
+
+调法是压测往上加，盯着 `pool.waitingCount`：一直有人等就说明不够，长期为 0 就停。
+
+**`connectionTimeoutMillis` 管排队等多久。** `max=1`、5 个并发各查 500ms、超时设 300ms：
+
+```
+#0    531 ms  成功
+#1-4  322 ms  失败 timeout exceeded when trying to connect
+```
+
+第 1 个拿到连接就不受它管了；后面 4 个**快速失败**，不等前面那个跑完。没有这个超时，排队的人一直干等，一路雪崩。
+
+注意三个超时不是一回事：`connectionTimeoutMillis`（等连接）、`query_timeout`（单条 SQL，客户端）、`statement_timeout`（单条 SQL，服务端）。
+
+**`idleTimeoutMillis` 管空闲多久回收。** 实测配 500ms，跑完 3 个查询后 `total=3`，等 900ms 变 `total=0`。不回收就一直占着 PG 的连接名额，半夜没人访问还挂着。
+
+**`idle_in_transaction_session_timeout` 是 PG 侧的**，专治「连接带着未结束事务回池子」。设 2 秒、开着事务干等：
+
+```
+[error 事件] [25P03] terminating connection due to idle-in-transaction timeout
+下次再查 → Client has encountered a connection error and is not queryable
+```
+
+这个坑要记住两点：
+
+- **错误从 `client.on('error')` 冒出来，不是你 `await` 的那个 query**。没接这个事件，Node 直接因为 unhandled error 崩进程（第一次测的时候真崩了）。只要自己 `pool.connect()`，就必须挂监听。
+- 连接已经废了，要 `client.release(true)` 标记销毁，不能干净归还，否则下一个人拿到就报错。
+
+### 生产配置
+
+```javascript
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 10,                        // 先 10，压测看 waitingCount 再调
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 3_000,
+  statement_timeout: 10_000,
+});
+```
+
+一个容易埋雷的点：**`set` 是会话级的，连接还回池子后设置还留着**，下一个借到的人会继承。要么 `set local`（只在事务内），要么归还前 `reset all`。
+
+---
+
+## 十三、迁移
+
+### 为什么不能手敲 SQL 改库
+
+本地 `alter table` 改完，生产库没有；换台电脑，得记着重敲一遍；三个人协作，谁改了什么没人知道；上线被问「生产现在什么结构」，答不上来。
+
+迁移工具把「改库」变成**代码**：一堆带时间戳的 SQL 文件进 Git，按名字排序执行，库里一张 `_prisma_migrations` 表记录哪些跑过了。这张表就是**数据库的版本号**。
+
+### 三条命令
+
+| 命令 | 用途 | 干什么 |
+|---|---|---|
+| `prisma migrate dev` | 开发 | 生成新迁移 + 应用到本地库 + 建 shadow database |
+| `prisma migrate deploy` | 上线 | 只跑没跑过的，不改文件、不生成、不建 shadow db |
+| `prisma migrate status` | 排查 | 看现状，有没有没应用的、有没有漂移 |
+
+还有 `prisma db push`，直接把 schema 推到库、**不生成迁移文件**。它不留痕，别人拿到代码重建不出这个库，**只能用在一次性的玩具库上**。
+
+**生产绝对不能跑 `migrate dev`**：它会生成新文件（生产不该有「生成」这个动作）、要建 shadow database（生产账号没这权限）、遇到漂移会建议 reset（清库）。
+
+### shadow database 是什么
+
+`migrate dev` 要先知道「库该长什么样」，才能和「现在什么样」比出差异。办法是开一个**全新的空库**，把 `migrations/` 里所有文件重放一遍，得到基准，算完差异就把这个库删掉。
+
+所以 init 迁移开头必须自己建扩展：
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "vector";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+```
+
+shadow database 是全新空库，不会执行 `infra/docker/init` 那些初始化脚本（那些只在数据卷为空时跑一次）。不写这两行，`migrate dev` 一跑就报 `type "vector" does not exist`。
+
+### 坑一：手敲的东西会造成 drift
+
+`migrate dev` 直接拒绝执行：
+
+```
+Drift detected: Your database schema is not in sync with your migration history.
+
+[+] Added tables
+  - accounts_demo / bloat_demo / dup_demo / hash_demo / lock_demo
+  - perf_demo / trunc_demo / wt_indexed / wt_plain
+We need to reset the "public" schema. All data will be lost.
+```
+
+这些是实验表，手敲建在 `public` 里，迁移历史里没有。Prisma 认为「库比迁移多东西」，唯一建议是清库重建。`--create-only` 也绕不过——漂移检查在生成之前。
+
+解法是把临时表和正式结构分开放：
+
+```sql
+create schema if not exists lab;
+alter table public.perf_demo set schema lab;
+```
+
+`set schema` 只搬家，数据、索引、序列都跟着走。**实验表一律建在 `lab` schema**，`public` 只留正式结构。
+
+### 坑二：自动生成的迁移会删东西
+
+只加了一个字段一个索引，生成的 SQL 里却多出这些：
+
+```sql
+DROP INDEX "kb_chunks_embedding_hnsw_idx";
+DROP INDEX "tickets_subject_trgm_idx";
+ALTER TABLE "tickets" ALTER COLUMN "updated_at" DROP DEFAULT;   -- 六张表各一条
+```
+
+原因：这些东西是 init 迁移里**手写**的（`schema.prisma` 表达不了 GIN trigram、HNSW、库级默认值），Prisma 在 schema 里看不到，就认为库比 schema 多了东西，每次生成迁移都要删。
+
+实测那两个索引当场被删了。
+
+**规则：`migrate dev` 生成的 `migration.sql` 必须逐行看，特别是 `DROP` 开头的。** 代码里加个字段、迁移里删个索引，这种事故真实发生过，而且往往上线才发现。
+
+已经成功应用的迁移不能 `--rolled-back`（报 `P3012`，那个命令只认失败的迁移）。撤掉的办法是手动还原 + 删记录：
+
+```sql
+begin;
+alter table tickets drop column sla_due_at;
+-- 把被误删的对象建回来
+create index tickets_subject_trgm_idx on tickets using gin (subject gin_trgm_ops);
+alter table tickets alter column updated_at set default now();
+-- 删掉记录，假装这条从没跑过
+delete from _prisma_migrations where migration_name = '20261106084636_add_ticket_sla_due_at';
+commit;
+```
+
+然后改好 `migration.sql`，`prisma migrate deploy` 重新应用（deploy 不检查漂移，只跑没跑过的）。
+
+### 上线步骤
+
+开发侧：
+
+```bash
+npx prisma migrate dev --create-only --name add_xxx   # 只生成
+# 打开 migration.sql 逐行 review，删掉不该有的 DROP
+npx prisma migrate deploy                              # 审完再应用
+npx prisma generate                                    # deploy 不会自动 generate
+```
+
+`schema.prisma` 和 `migration.sql` **必须进同一个 commit**。只提交一个，下次上线就炸。
+
+CI 里加两道检查：
+
+```bash
+npx prisma migrate deploy          # 空库重放，验证「从零能不能建起来」
+
+npx prisma migrate diff \
+  --from-migrations prisma/migrations \
+  --to-schema-datamodel prisma/schema.prisma \
+  --exit-code                        # 有未提交的 schema 改动就非 0 退出
+```
+
+生产侧：**先迁移，再起新版本代码**。顺序反了整个滚动发布期间都在报错。
+
+空库重放出来的结构和本地逐字段一致——因为它跑的是**同一批 SQL**，不是拷贝。实测两个库对比：
+
+| | 本地 | 新库 |
+|---|---|---|
+| 表 | 12 | 12 |
+| 索引 | 35 | 35 |
+| 约束 | 52 | 52 |
+| 触发器 | 2 | 2 |
+| `tickets` 行数 | 200 | 0 |
+
+扩展 `vector` / `pg_trgm` 也在，因为它们写在迁移里；`lab` schema 不在，因为那是手敲的。
+
+### 业务数据不挪，但基础数据要有
+
+空库建完，`organizations` / `users` 都是 0 行，**登录不进去**。
+
+`prisma/seed.ts` 开头写着「先清空再灌」，那是开发数据，**生产跑一次就把线上数据清了**。生产要单独的 bootstrap：建第一个组织、第一个管理员，密码从环境变量读。
+
+关键设计是**幂等**：进来先查 `organizations` 有没有数据，有就退出。生产脚本一定会被手滑跑第二次或流水线重跑，它不该有任何副作用。三张表（组织 / 用户 / 成员关系）包在一个事务里，避免「半初始化」——只剩组织没有管理员，比空库更难排查。
+
+### 改字段要拆成三次发布
+
+滚动发布期间新旧两个版本连的是同一个库，所以**迁移必须向后兼容**。
+
+expand / contract：
+
+1. **扩展**：加新列，代码同时写新旧两列，读还是读旧的
+2. **回填 + 切换**：分批回填历史数据（一次几千行，别一条 update 全表），代码改成读新列
+3. **收缩**：确认没人用旧列了，才删
+
+**改名尤其危险**：schema 里改个字段名，Prisma 生成的是 `DROP COLUMN` + `ADD COLUMN`，你以为是改名，实际数据全丢。改名一律走「加新列 → 双写 → 回填 → 切读 → 删旧列」。
+
+大表上还有几条：
+
+- 建索引必须 `create index concurrently`，普通 `create index` 拿 `SHARE` 锁阻塞所有写
+- 但 **`CONCURRENTLY` 不能放进迁移文件**，Prisma 把每个迁移包在事务里执行，它不允许在事务内运行。大表加索引得挪到迁移之外单独执行
+- `add column` 带默认值在 PG 11+ 只改元数据不重写表；不带默认值的 `NOT NULL` 会全表扫
+- 加 `CHECK` 约束用 `NOT VALID` 先加上，再 `VALIDATE CONSTRAINT` 慢慢验，不锁表
+
+### 迁移没有自动回滚
+
+Prisma 只往前走，不生成 down 迁移。失败时 PG 的 DDL 是事务性的，这条迁移整体回滚，`_prisma_migrations` 留一条 `finished_at` 为空的记录。
+
+修好后两个选择：
+
+```bash
+npx prisma migrate resolve --applied 2026xxx   # 手工把库改到位，标记为已应用
+npx prisma migrate resolve --rolled-back 2026xxx  # 手工撤销干净，标记为已回滚
+```
+
+这俩**只改记录表，不改库**，库得自己弄。
+
+真正的回滚方案只有两个：发布前 `pg_dump` 备份（保命的），或者写一条反向迁移往前走（日常的）。
+

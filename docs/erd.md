@@ -218,6 +218,7 @@ erDiagram
 | `assignee_id` | uuid? FK → users | 处理人，可空（未指派） |
 | `source` | text | `web` / `email` / `api` |
 | `first_response_at` | timestamptz? | 首次响应时间，SLA 计算基准 |
+| `sla_due_at` | timestamptz? | SLA 到期时间。建单时按优先级策略算好落库，可空表示不受 SLA 约束 |
 | `resolved_at` | timestamptz? | |
 | `closed_at` | timestamptz? | |
 | `ai_category` | text? | 模型给出的分类，与人工 `category` 分开存 |
@@ -232,6 +233,7 @@ erDiagram
 | `(org_id, assignee_id, status)` | “我的工单”，工作台首屏 |
 | `(org_id, number) UNIQUE` | 按编号直达。也就保证组织内序号不重复 |
 | `(org_id, created_at DESC)` | 统计与导出，避免全表扫 |
+| `(org_id, sla_due_at)` | SLA 看板：某组织快到期 / 已超期的工单。等值列在前、范围列在后 |
 | GIN `to_tsvector('simple', subject \|\| ' ' || description)` | 全文搜索。用 `simple` 而非 `english`：中文分词交给应用层，这里只做基础词元 |
 | GIN `subject gin_trgm_ops` | 标题模糊匹配，支撑 `ILIKE '%关键词%'` |
 
@@ -241,6 +243,7 @@ erDiagram
 - **`number` 不做全局自增。** 编号对外可见，全局自增会暴露平台总单量。用 `(org_id, number)` 唯一 + 事务内取 `max(number) + 1`，配合行锁保证不撞号。
 - **状态变更不直接改字段了事。** 每次变更同时写一条 `ticket_events`，两件事在同一个事务里。
 - **`first_response_at` 单独存。** 想统计 SLA 时用 `created_at` 和第一条公开评论的时间去算，等于每次统计都做一次关联聚合。落成字段是一次写入换无数次读取。
+- **`sla_due_at` 落库而不是每次算。** 到期时间 = 建单时间 + 优先级对应的时限，时限来自组织配置。每次查询再去 join 配置表算一遍，就没法在 `sla_due_at` 上建索引，SLA 看板只能全表扫。落成字段后 `(org_id, sla_due_at)` 一条索引就能出「今天到期的」。
 
 ### ticket_comments
 

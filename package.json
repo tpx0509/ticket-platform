@@ -30,5 +30,8 @@
     "lint": "pnpm -r --if-present lint",
     "build": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test"
+  },
+  "devDependencies": {
+    "pg": "^8.23.1"
   }
 }

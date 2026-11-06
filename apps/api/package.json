@@ -12,6 +12,7 @@
     "prisma:status": "prisma migrate status",
     "prisma:studio": "prisma studio",
     "db:seed": "prisma db seed",
+    "db:bootstrap": "tsx prisma/bootstrap.ts",
     "db:reset": "prisma migrate reset --force"
   },
   "dependencies": {

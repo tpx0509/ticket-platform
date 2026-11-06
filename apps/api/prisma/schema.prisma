@@ -112,6 +112,7 @@ model Ticket {
   assigneeId      String?   @map("assignee_id") @db.Uuid
   source          String    @default("web")
   firstResponseAt DateTime? @map("first_response_at") @db.Timestamptz(6)
+  slaDueAt        DateTime? @map("sla_due_at") @db.Timestamptz(6)
   resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(6)
   closedAt        DateTime? @map("closed_at") @db.Timestamptz(6)
   aiCategory      String?   @map("ai_category")
@@ -135,6 +136,8 @@ model Ticket {
   @@unique([orgId, number])
   // 统计与导出
   @@index([orgId, createdAt(sort: Desc)])
+  // SLA 看板：某组织快到期 / 已超期的工单
+  @@index([orgId, slaDueAt])
   @@map("tickets")
 }
 
