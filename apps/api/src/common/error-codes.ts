@@ -12,6 +12,9 @@ export const ERROR_CODES = {
   COMMON_RATE_LIMITED: { status: 429, message: '请求过于频繁' },
   COMMON_INTERNAL: { status: 500, message: '服务暂时不可用' },
   COMMON_UNAVAILABLE: { status: 503, message: '依赖服务不可用' },
+
+  // 工单域。越权访问也用它 —— 不能返回 403，否则等于确认「这个 id 存在」
+  TICKET_NOT_FOUND: { status: 404, message: '工单不存在' },
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

@@ -155,6 +155,41 @@ Base URL：`/api/v1`
 
 游标为 `(created_at, id)` 的 base64 编码。不用 offset：工单会持续插入，翻页时 offset 会导致重复与遗漏。
 
+`GET /orgs/:orgId/tickets/:id` 响应：
+
+```jsonc
+{
+  "data": {
+    "id": "uuid",
+    "number": 1,
+    "subject": "API 返回 429 限流",
+    "description": "完整正文",
+    "status": "pending",
+    "priority": "urgent",
+    "category": "客户端异常",
+    "source": "web",
+    "requester": { "id": "uuid", "name": "许清和" },
+    "assignee": { "id": "uuid", "name": "周砚" },   // 未指派为 null
+    "firstResponseAt": null,
+    "slaDueAt": null,
+    "resolvedAt": null,
+    "closedAt": null,
+    "createdAt": "2026-10-23T02:02:54.063Z",
+    "updatedAt": "2026-10-23T02:02:54.063Z"
+  }
+}
+```
+
+**以下三种情况返回完全相同的 `404 TICKET_NOT_FOUND`，不返回 403：**
+
+1. id 从来没存在过
+2. id 存在但已软删（`deleted_at` 非空）
+3. id 存在但属于别的组织
+
+403 等于确认「这个 id 存在，只是不归你」，攻击者能据此摸出别人的数据轮廓。做法是让租户条件进查询，而不是查出来之后再比较：`findFirst({ where: { id, orgId } })`，而不是 `findUnique({ where: { id } })` 再加一个 `if`。
+
+路径里的 `orgId` 与 `id` 必须是 uuid，格式不合法直接 `400 COMMON_VALIDATION_FAILED`，不查库。
+
 `POST /orgs/:orgId/tickets`：
 
 ```jsonc
