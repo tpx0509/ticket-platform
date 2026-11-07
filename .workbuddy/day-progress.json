@@ -1,5 +1,5 @@
 {
-  "last_completed": 6,
+  "last_completed": 8,
   "days": {
     "2": {
       "date": "2026-11-03",
@@ -45,6 +45,18 @@
         "697b372"
       ],
       "wallpaper": "day-07.png"
+    },
+    "7": {
+      "date": "2026-11-07",
+      "title": "项目建模",
+      "commits": [],
+      "wallpaper": "day-08.png"
+    },
+    "8": {
+      "date": "2026-11-07",
+      "title": "HTTP 本质",
+      "commits": [],
+      "wallpaper": "day-09.png"
     }
   }
 }
