@@ -12,6 +12,7 @@
     "db:reset": "docker compose down -v && docker compose up -d postgres redis",
     "db:logs": "docker compose logs -f postgres",
     "db:psql": "docker compose exec postgres psql -c \"select version();\"",
+    "db:exec": "docker exec -it td-postgres psql -U ticket -d ticket_dev",
     "db:tables": "docker compose exec postgres psql -c \"\\dt\"",
     "db:indexes": "docker compose exec postgres psql -c \"\\di\"",
     "db:shell": "docker compose exec postgres psql",
