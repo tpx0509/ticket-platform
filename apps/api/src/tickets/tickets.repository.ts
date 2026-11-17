@@ -1,11 +1,12 @@
 import { Injectable } from "@nestjs/common"
 import { PrismaService } from "src/infra/prisma/prisma.service"
+import { CreateTicketInput, ListTicketsQuery } from "./tickets.schema"
 
 @Injectable()
 export class TicketsRepository {
     constructor(private readonly prisma: PrismaService) {
     }
-    findList(orgId:string, query: { status?:string; priority?:string; limit?:string }) {
+    findList(orgId:string, query: ListTicketsQuery) {
         return this.prisma.withTenant(orgId,(tx) => {
             return tx.ticket.findMany({
                 where: { 
@@ -32,7 +33,7 @@ export class TicketsRepository {
             })
         })
     }
-    create(orgId:string, params: any) {
+    create(orgId:string, params: CreateTicketInput) {
         return this.prisma.withTenant(orgId,async (tx) => {
             // 先获取当前组织的自增number，然后+1
             const agg = await tx.ticket.aggregate({
@@ -43,7 +44,7 @@ export class TicketsRepository {
             return tx.ticket.create({
                 data: {
                     orgId,
-                    requesterId:params.requesterId,
+                    requesterId: params.requesterId,
                     subject : params.subject,
                     priority: params.priority,
                     description: params.description,

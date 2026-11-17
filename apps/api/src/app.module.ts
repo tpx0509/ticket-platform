@@ -4,6 +4,7 @@ import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { JsonLogger } from './common/json-logger';
 import { ResponseInterceptor } from './common/response.interceptor';
+import { AccessLogInterceptor } from './common/accesslog.interceptor';
 import { ConfigModule } from './config/config.module';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './infra/prisma/prisma.service';
@@ -18,6 +19,8 @@ import { TicketsModule } from './tickets/tickets.module';
     // 用 provider 注册而不是 app.useGlobalFilters()，这样过滤器也能注入依赖
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: AccessLogInterceptor },
+    
   ],
 })
 export class AppModule {}
