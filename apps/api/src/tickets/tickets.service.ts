@@ -17,10 +17,9 @@ export class TicketsService {
         return res
     }
     async create(
-        orgId: string, 
+        orgId: string,
         body: CreateTicketInput,
-        // 临时占位，等有userId了修改
-        requesterId = 'ab4074c7-064b-4d41-bc83-329ff9acc72a'
+        requesterId: string
     ) {
         const res = await this.repo.create(orgId,{ ...body, requesterId })
         return res

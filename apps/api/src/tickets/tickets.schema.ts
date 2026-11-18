@@ -7,7 +7,6 @@ export const listTicketsQuerySchema = z.object({
 })
 
 export const createTicketSchema  = z.object({
-    requesterId: z.uuid(),
     subject: z.string().min(1).max(100),
     description : z.string().min(1).max(500),
     priority: z.enum(['low','normal','high','urgent']).optional()

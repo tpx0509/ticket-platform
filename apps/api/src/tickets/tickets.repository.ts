@@ -33,7 +33,8 @@ export class TicketsRepository {
             })
         })
     }
-    create(orgId:string, params: CreateTicketInput) {
+    // 交叉类型：用户填的字段 + 身份字段，分开表达，边界清楚
+    create(orgId:string, params: CreateTicketInput & { requesterId: string }) {
         return this.prisma.withTenant(orgId,async (tx) => {
             // 先获取当前组织的自增number，然后+1
             const agg = await tx.ticket.aggregate({

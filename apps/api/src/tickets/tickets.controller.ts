@@ -1,9 +1,17 @@
 
-import { Controller,Get,Param,Post,Query,Body,Headers } from '@nestjs/common';
+import { Controller,Get,Param,Post,Query,Body,UseGuards } from '@nestjs/common';
 import { TicketsService } from './tickets.service';
 import { ZodValidationPipe } from 'src/common/zod-validation.pipe';
 import { z } from 'zod';
+import { JwtAuthGuard } from 'src/common/jwt-auth.guard';
+import { CurrentUserId } from 'src/common/current-user.decorator';
 import { createTicketSchema, ListTicketsQuery, listTicketsQuerySchema,CreateTicketInput } from './tickets.schema';
+
+/**
+ * 整个 controller 都要登录才能访问。挂在类上比每个方法挂一遍安全 ——
+ * 以后新增接口默认就是受保护的，忘了挂是「多一层保护」而不是「漏一个洞」。
+ */
+@UseGuards(JwtAuthGuard)
 @Controller('orgs/:orgId/tickets')
 export class TicketsController {
     constructor(private readonly service: TicketsService) {} 
@@ -25,7 +33,8 @@ export class TicketsController {
     @Post()
     create(
         @Param('orgId',new ZodValidationPipe(z.uuid())) orgId:string,
+        @CurrentUserId() userId: string,
         @Body(new ZodValidationPipe(createTicketSchema)) body: CreateTicketInput) {
-        return this.service.create(orgId,body)
+        return this.service.create(orgId,body,userId)
     }
 }
