@@ -2,6 +2,7 @@ import 'reflect-metadata';
 
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import cookieParser from 'cookie-parser';
 
 import { AppModule } from './app.module';
 import { JsonLogger } from './common/json-logger';
@@ -12,6 +13,9 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   app.useLogger(app.get(JsonLogger));
+  // cookie-parser 解析 Cookie 头，req.cookies 才能拿到 refresh token。
+  // 不签名、不加密，只是把 "a=1; b=2" 拆成对象 —— 内容安全靠 httpOnly + 服务端校验，不靠这个中间件。
+  app.use(cookieParser());
   // 必须第一个挂：后面的拦截器和控制器都依赖它写入的 requestId
   app.use(requestContextMiddleware);
 
