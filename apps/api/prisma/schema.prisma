@@ -120,6 +120,9 @@ model Ticket {
   slaDueAt        DateTime? @map("sla_due_at") @db.Timestamptz(6)
   resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(6)
   closedAt        DateTime? @map("closed_at") @db.Timestamptz(6)
+  // 幂等键：客户端为「同一次建单意图」生成的 uuid，重发时原样带回。
+  // 可空 —— 老客户端和后台脚本不传，NULL 之间不冲突（SQL 里 NULL 不等于 NULL）。
+  idempotencyKey  String?   @map("idempotency_key") @db.Uuid
   aiCategory      String?   @map("ai_category")
   aiConfidence    Decimal?  @map("ai_confidence") @db.Decimal(4, 3)
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
@@ -139,6 +142,9 @@ model Ticket {
   @@index([orgId, assigneeId, status])
   // 组织内编号唯一，同时支撑按编号直达
   @@unique([orgId, number])
+  // 幂等键按组织隔离：不同组织用同一个 key 互不影响。
+  // 这份唯一约束就是幂等的全部实现 —— 并发重发时靠它兜底，应用层只负责冲突后回查。
+  @@unique([orgId, idempotencyKey])
   // 统计与导出
   @@index([orgId, createdAt(sort: Desc)])
   // SLA 看板：某组织快到期 / 已超期的工单

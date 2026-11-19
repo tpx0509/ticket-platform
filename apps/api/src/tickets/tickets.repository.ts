@@ -337,7 +337,10 @@ export class TicketsRepository {
     }
 
     // 交叉类型：用户填的字段 + 身份字段，分开表达，边界清楚
-    create(orgId: string, params: CreateTicketInput & { requesterId: string }) {
+    create(
+        orgId: string,
+        params: CreateTicketInput & { requesterId: string; idempotencyKey?: string },
+    ) {
         return this.prisma.withTenant(orgId, async (tx) => {
             // 先获取当前组织的自增number，然后+1
             const agg = await tx.ticket.aggregate({
@@ -352,9 +355,27 @@ export class TicketsRepository {
                     subject: params.subject,
                     priority: params.priority,
                     description: params.description,
+                    // undefined 时 Prisma 直接把这一列从 INSERT 里去掉，落库就是 NULL，
+                    // 不传 key 的请求完全不受幂等逻辑影响
+                    idempotencyKey: params.idempotencyKey,
                     number: next
                 }
             })
         })
+    }
+
+    /**
+     * 幂等重放时回查第一次建的那条。
+     *
+     * 故意不过滤 deletedAt：唯一索引不看这一列，软删之后 key 依然被占着。
+     * 这时候过滤掉会查不到 → 又抛一次原始冲突 → 客户端拿到 500，
+     * 而语义上「这个 key 对应的单子存在，只是被删了」，返回它比报错更接近真实。
+     */
+    findByIdempotencyKey(orgId: string, idempotencyKey: string) {
+        return this.prisma.withTenant(orgId, (tx) =>
+            tx.ticket.findFirst({
+                where: { orgId, idempotencyKey },
+            }),
+        )
     }
 }
