@@ -3,6 +3,7 @@ import { AuthModule } from "src/auth/auth.module";
 import { AttachmentsController } from "./attachments.controller";
 import { AttachmentsRepository } from "./attachments.repository";
 import { AttachmentsService } from "./attachments.service";
+import { RateLimitGuard } from "src/common/rate-limit.guard";
 import { TicketsController } from "./tickets.controller";
 import { TicketsRepository } from './tickets.repository';
 import { TicketsService } from "./tickets.service";
@@ -11,6 +12,7 @@ import { TicketsService } from "./tickets.service";
     // 少了这行，启动会报 can't resolve dependencies of the JwtAuthGuard。
     imports: [AuthModule],
     controllers : [TicketsController, AttachmentsController],
-    providers : [TicketsService, TicketsRepository, AttachmentsService, AttachmentsRepository]
+    // RateLimitGuard 要用 RedisService（PrismaModule/RedisModule 都是 @Global，不用 import）
+    providers : [TicketsService, TicketsRepository, AttachmentsService, AttachmentsRepository, RateLimitGuard]
 })
 export class TicketsModule {}

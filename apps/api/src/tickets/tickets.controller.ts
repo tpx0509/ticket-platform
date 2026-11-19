@@ -8,6 +8,8 @@ import { z } from 'zod';
 import { JwtAuthGuard } from 'src/common/jwt-auth.guard';
 import { OrgMemberGuard } from 'src/common/org-member.guard';
 import { RolesGuard } from 'src/common/roles.guard';
+import { RateLimitGuard } from 'src/common/rate-limit.guard';
+import { RateLimit } from 'src/common/rate-limit.decorator';
 import { Roles } from 'src/common/roles.decorator';
 import { CurrentUserId } from 'src/common/current-user.decorator';
 import { createTicketSchema, ListTicketsQuery, listTicketsQuerySchema,CreateTicketInput } from './tickets.schema';
@@ -18,8 +20,10 @@ import { createTicketSchema, ListTicketsQuery, listTicketsQuerySchema,CreateTick
  *
  * 顺序不能反：OrgMemberGuard 依赖 JwtAuthGuard 写入的 req.user，
  * RolesGuard 依赖 OrgMemberGuard 写入的 req.orgMember。
+ * RateLimitGuard 放最后，因为它要靠 req.user 决定按谁计数 ——
+ * 放前面的话所有请求都只能按 IP 算，登录用户失去了区分度。
  */
-@UseGuards(JwtAuthGuard, OrgMemberGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, OrgMemberGuard, RolesGuard, RateLimitGuard)
 @Controller('orgs/:orgId/tickets')
 export class TicketsController {
     constructor(private readonly service: TicketsService) {} 
@@ -41,6 +45,9 @@ export class TicketsController {
     /** viewer 只读，不能建单。list / detail 不挂，所有成员都能看 */
     @Post()
     @Roles('owner', 'admin', 'agent')
+    // 每分钟 5 单。写操作才限流 —— 读接口限流会把正常刷列表的人误伤掉。
+    // 数太小不好测也容易误伤，5 是拿来做演示的，真实项目按业务定。
+    @RateLimit({ limit: 5, windowSec: 60 })
     async create(
         @Param('orgId',new ZodValidationPipe(z.uuid())) orgId:string,
         @CurrentUserId() userId: string,
