@@ -11,6 +11,8 @@ const LIST_SELECT = {
     subject: true,
     status: true,
     priority: true,
+    // 生成列，按优先级排序和生成 cursor 都要用
+    priorityWeight: true,
     createdAt: true,
 } as const
 
@@ -44,7 +46,13 @@ export type ListPage = { data: ListRow[]; meta: ListPageMeta }
 type ListCursor = {
     sort: TicketSort
     order: TicketOrder
-    /** 主排序键的值：sort=createdAt 时是 ISO 时间串，sort=number 时是编号 */
+    /**
+     * 主排序键的值：
+     * sort=createdAt 时是 ISO 时间串，
+     * sort=number 时是编号，
+     * sort=priority 时是业务权重（1~4），不是 'high' 这种字面量 ——
+     * 字面量比大小仍然走字典序，等于没修。
+     */
     value: string | number
     /** tiebreaker。主键值相同时靠它定位，必须和锚点一起进 cursor */
     id: string
@@ -69,7 +77,7 @@ function decodeCursor(raw: string): ListCursor {
 
     const c = parsed as Partial<ListCursor>
 
-    if (c?.sort !== 'createdAt' && c?.sort !== 'number') {
+    if (c?.sort !== 'createdAt' && c?.sort !== 'number' && c?.sort !== 'priority') {
         throw new AppError('COMMON_VALIDATION_FAILED', 'cursor 内容不合法')
     }
     if (c?.order !== 'asc' && c?.order !== 'desc') {
@@ -85,7 +93,8 @@ function decodeCursor(raw: string): ListCursor {
             throw new AppError('COMMON_VALIDATION_FAILED', 'cursor 时间不合法')
         }
     } else if (typeof c.value !== 'number' || !Number.isInteger(c.value) || c.value < 0) {
-        throw new AppError('COMMON_VALIDATION_FAILED', 'cursor 编号不合法')
+        // number 是编号，priority 是权重，都必须是整数字面量
+        throw new AppError('COMMON_VALIDATION_FAILED', 'cursor 数值不合法')
     }
 
     return { sort: c.sort, order: c.order, value: c.value, id: c.id }
@@ -101,7 +110,10 @@ function decodeCursor(raw: string): ListCursor {
  */
 function buildOrderBy(sort: TicketSort, order: TicketOrder): Prisma.TicketOrderByWithRelationInput[] {
     const primary: Prisma.TicketOrderByWithRelationInput =
-        sort === 'createdAt' ? { createdAt: order } : { number: order }
+        sort === 'createdAt' ? { createdAt: order }
+            : sort === 'number' ? { number: order }
+                // 对外叫 priority，实际排的是生成列 —— 按 priority 那列排是字典序
+                : { priorityWeight: order }
     return [primary, { id: 'asc' }]
 }
 
@@ -120,6 +132,13 @@ function buildCursorWhere(cursor: ListCursor): Prisma.TicketWhereInput {
             : { OR: [{ createdAt: { gt: at } }, { createdAt: at, id: { gt: cursor.id } }] }
     }
 
+    if (cursor.sort === 'priority') {
+        const w = cursor.value as number
+        return cursor.order === 'desc'
+            ? { OR: [{ priorityWeight: { lt: w } }, { priorityWeight: w, id: { gt: cursor.id } }] }
+            : { OR: [{ priorityWeight: { gt: w } }, { priorityWeight: w, id: { gt: cursor.id } }] }
+    }
+
     const num = cursor.value as number
     return cursor.order === 'desc'
         ? { OR: [{ number: { lt: num } }, { number: num, id: { gt: cursor.id } }] }
@@ -131,7 +150,9 @@ function encodeFromRow(row: ListRow, sort: TicketSort, order: TicketOrder): stri
     return encodeCursor({
         sort,
         order,
-        value: sort === 'createdAt' ? row.createdAt.toISOString() : row.number,
+        value: sort === 'createdAt' ? row.createdAt.toISOString()
+            : sort === 'number' ? row.number
+                : row.priorityWeight,
         id: row.id,
     })
 }

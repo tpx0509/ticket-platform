@@ -9,8 +9,11 @@ export const DEFAULT_PAGE_SIZE = 10;
 /**
  * 可排序的字段。用 as const + 派生类型，而不是到处写 string：
  * 打错字在编译期就报，且 orderBy 那边能直接拿到字面量类型。
+ *
+ * priority 不能直接按列排序 —— 那一列是 text，数据库按字典序排出来是
+ * high < low < normal < urgent。实际排序走的是 generated column priorityWeight。
  */
-export const TICKET_SORT_FIELDS = ['createdAt', 'number'] as const;
+export const TICKET_SORT_FIELDS = ['createdAt', 'number', 'priority'] as const;
 export type TicketSort = (typeof TICKET_SORT_FIELDS)[number];
 
 export const TICKET_ORDERS = ['asc', 'desc'] as const;

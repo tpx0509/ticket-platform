@@ -107,6 +107,11 @@ model Ticket {
   description     String
   status          String    @default("open")
   priority        String    @default("normal")
+  // 生成列：数据库按 priority 算出的业务权重（low=1 normal=2 high=3 urgent=4）。
+  // 字典序排不出业务顺序，排序必须走这一列。
+  // @default(dbgenerated()) 表示「这列的默认值由数据库给」，Prisma 因此不会在
+  // INSERT 里带上它（生成列本来也不允许写入），create 时也不用传。
+  priorityWeight  Int       @default(dbgenerated()) @map("priority_weight")
   category        String?
   requesterId     String    @map("requester_id") @db.Uuid
   assigneeId      String?   @map("assignee_id") @db.Uuid
@@ -138,6 +143,8 @@ model Ticket {
   @@index([orgId, createdAt(sort: Desc)])
   // SLA 看板：某组织快到期 / 已超期的工单
   @@index([orgId, slaDueAt])
+  // 按优先级排序翻页：(org_id, weight, id)，id 是同一权重内的 tiebreaker
+  @@index([orgId, priorityWeight, id])
   @@map("tickets")
 }
 
