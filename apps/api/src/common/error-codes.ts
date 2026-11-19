@@ -15,6 +15,11 @@ export const ERROR_CODES = {
 
   // 工单域。越权访问也用它 —— 不能返回 403，否则等于确认「这个 id 存在」
   TICKET_NOT_FOUND: { status: 404, message: '工单不存在' },
+
+  // 附件域。跨组织访问附件同样返回 404，理由同上
+  ATTACHMENT_NOT_FOUND: { status: 404, message: '附件不存在' },
+  ATTACHMENT_FILE_REQUIRED: { status: 400, message: '未收到文件，请用 file 字段上传' },
+  ATTACHMENT_TYPE_NOT_ALLOWED: { status: 400, message: '不支持的文件类型' },
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

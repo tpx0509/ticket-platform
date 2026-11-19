@@ -7,7 +7,9 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "strictPropertyInitialization": false,
-    "types": ["node"]
+    // multer 必须显式列出：它靠扩展 global.Express 命名空间提供 Express.Multer.File，
+    // 而 types 一旦写了具体值，@types 目录下其他包就不会被自动加载了。
+    "types": ["node", "multer"]
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "prisma"]

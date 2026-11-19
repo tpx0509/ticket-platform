@@ -80,6 +80,26 @@ export class AllExceptionsFilter implements ExceptionFilter {
     message: string;
     details?: FieldError[];
   } {
+    // multer 的错发生在解析阶段，比 controller 还早，所以它不会是 AppError。
+    // 不翻译的话超限会掉进「未预期异常」分支变成 500，调用方以为服务挂了。
+    // 用 name 判断而不是 instanceof，是为了不让 common 层依赖 multer 包。
+    if (exception instanceof Error && exception.name === 'MulterError') {
+      const multerCode = (exception as Error & { code?: string }).code;
+      if (multerCode === 'LIMIT_FILE_SIZE') {
+        return {
+          status: HttpStatus.PAYLOAD_TOO_LARGE,
+          code: 'COMMON_PAYLOAD_TOO_LARGE',
+          message: '文件超出大小限制',
+        };
+      }
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        code: 'COMMON_VALIDATION_FAILED',
+        message: '上传参数不合法',
+        details: [{ field: '', message: multerCode ?? 'MulterError' }],
+      };
+    }
+
     if (exception instanceof AppError) {
       return {
         status: exception.status,
@@ -93,6 +113,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const status = exception.getStatus();
       const payload = exception.getResponse();
       const code = STATUS_TO_CODE[status] ?? (status >= 500 ? 'COMMON_INTERNAL' : 'COMMON_VALIDATION_FAILED');
+
+      // multer 的超限在 Nest 里已经被包成 PayloadTooLargeException，
+      // 但它自带的文案是英文的 "File too large"，直接透出去前端看不懂也不好做多语言。
+      if (status === HttpStatus.PAYLOAD_TOO_LARGE) {
+        return { status, code, message: '文件或请求体超出大小限制' };
+      }
 
       if (typeof payload === 'string') {
         return { status, code, message: payload };
