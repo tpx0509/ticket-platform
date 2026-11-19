@@ -19,6 +19,46 @@ export type TicketSort = (typeof TICKET_SORT_FIELDS)[number];
 export const TICKET_ORDERS = ['asc', 'desc'] as const;
 export type TicketOrder = (typeof TICKET_ORDERS)[number];
 
+/** 纯日期写法（2026-07-31），用来和「带时分秒的完整时间串」区分 */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 业务时区。用户在北京，前端传「2026-07-15」时想的是本地那一天，
+ * 不是 UTC 的那一天。库里存的是 timestamptz（统一 UTC），
+ * 所以边界值要按 +08:00 换算，否则会整体差 8 小时 ——
+ * 表现为「选今天查不到今天的单」，而且前端看不出哪里错了。
+ */
+const BUSINESS_TZ = '+08:00';
+
+/**
+ * 时间参数按字符串接进来，不用 z.coerce.date()。
+ * 原因：coerce 之后原始形状就丢了，而下面要判断「这是纯日期还是完整时间」——
+ * 纯日期的结束边界得推到次日零点，否则 createdTo=2026-07-31 会把当天整天漏掉。
+ */
+const dateParamSchema = z
+    .string()
+    .trim()
+    .refine((s) => !Number.isNaN(new Date(s).getTime()), '时间格式不合法，例如 2026-07-01');
+
+/** 起始边界：纯日期补成本地零点，其余原样转 Date */
+function toRangeStart(raw?: string): Date | undefined {
+    if (!raw) return undefined;
+    return new Date(DATE_ONLY.test(raw) ? `${raw}T00:00:00${BUSINESS_TZ}` : raw);
+}
+
+/**
+ * 结束边界：纯日期补到「次日零点」，配 lt 就是「含当天整天」。
+ * 带时分秒的原样返回，调用方自己负责精确到秒。
+ */
+function toRangeEnd(raw?: string): Date | undefined {
+    if (!raw) return undefined;
+    if (!DATE_ONLY.test(raw)) return new Date(raw);
+    const d = new Date(`${raw}T00:00:00${BUSINESS_TZ}`);
+    // 加一天是按 UTC 加，跨时区时日期算术用 UTC 最稳
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d;
+}
+
 /**
  * 列表入参。两种分页方式共用一个 schema，由 transform 归一化成统一形状：
  *
@@ -46,6 +86,21 @@ export const listTicketsQuerySchema = z
         sort: z.enum(TICKET_SORT_FIELDS).default('createdAt'),
         /** 排序方向，默认倒序（最新的在前） */
         order: z.enum(TICKET_ORDERS).default('desc'),
+        /**
+         * 关键字，搜标题和描述。max(50) 不是随手写的：
+         * ILIKE '%...%' 前面带通配符用不上索引，字符串越长扫得越慢，
+         * 不设上限等于给了一个「用超长字符串拖垮库」的入口。
+         */
+        q: z.string().trim().min(1).max(50).optional(),
+        /** 创建时间起，含 */
+        createdFrom: dateParamSchema.optional(),
+        /** 创建时间止，纯日期时含当天整天 */
+        createdTo: dateParamSchema.optional(),
+        /**
+         * 负责人。query 参数传不了 null，所以用 unassigned 当哨兵值：
+         * 不传 = 不筛，unassigned = 筛未分配，uuid = 筛某个人的。
+         */
+        assigneeId: z.union([z.literal('unassigned'), z.uuid()]).optional(),
     })
     .superRefine((q, ctx) => {
         // 两个名字都传了但值不一样，说明调用方自己没搞清楚要什么，直接报错
@@ -72,17 +127,37 @@ export const listTicketsQuerySchema = z
                 message: '传了 cursor 就不能指定 mode=offset',
             });
         }
+        // 时间写反一定查不到东西。静默返回空列表会被当成「没有数据」，而不是「参数写错了」
+        if (q.createdFrom !== undefined && q.createdTo !== undefined
+            && new Date(q.createdFrom).getTime() > new Date(q.createdTo).getTime()) {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['createdTo'],
+                message: '结束时间不能早于开始时间',
+            });
+        }
     })
-    .transform((q) => ({
-        status: q.status,
-        priority: q.priority,
-        pageSize: q.pageSize ?? q.limit ?? DEFAULT_PAGE_SIZE,
-        pageNum: q.pageNum ?? 1,
-        cursor: q.cursor,
+    .transform((v) => ({
+        status: v.status,
+        priority: v.priority,
+        pageSize: v.pageSize ?? v.limit ?? DEFAULT_PAGE_SIZE,
+        pageNum: v.pageNum ?? 1,
+        cursor: v.cursor,
         // 带 cursor 的请求一定是想接着上一页翻，不管 mode 有没有写
-        mode: (q.cursor !== undefined ? 'cursor' : (q.mode ?? 'offset')) as 'cursor' | 'offset',
-        sort: q.sort,
-        order: q.order
+        mode: (v.cursor !== undefined ? 'cursor' : (v.mode ?? 'offset')) as 'cursor' | 'offset',
+        sort: v.sort,
+        order: v.order,
+        q: v.q,
+        /**
+         * 三态，靠 undefined 和 null 区分：
+         * undefined = 不筛，null = 筛未分配，string = 筛指定的人。
+         * Prisma 那边 assigneeId: undefined 会被整条忽略，null 生成 IS NULL，正好对上。
+         */
+        assigneeId: v.assigneeId === undefined
+            ? undefined
+            : v.assigneeId === 'unassigned' ? null : v.assigneeId,
+        createdFrom: toRangeStart(v.createdFrom),
+        createdTo: toRangeEnd(v.createdTo),
     }));
 
 export const createTicketSchema  = z.object({

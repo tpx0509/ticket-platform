@@ -21,9 +21,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   constructor(config: ConfigService) {
     // Prisma 7 不再内置 Rust 引擎，连接由驱动适配器负责。
     // 连接池上限跟着 DATABASE_POOL_MAX 走，不写死在代码里。
+    //
+    // options 里必须钉死时区。PG 服务端默认是 Asia/Shanghai，会返回
+    // "2026-08-15 02:02:54+08" 这种带偏移的文本，而 Prisma 的适配器把偏移
+    // 丢掉了、按 UTC 解析 —— 结果每条时间都比真实值晚 8 小时，且不报任何错。
+    // 会话时区改成 UTC 之后，服务端返回 +00 的文本，解析就一致了。
     const adapter = new PrismaPg({
       connectionString: config.get('DATABASE_URL'),
       max: config.get('DATABASE_POOL_MAX'),
+      options: '-c timezone=UTC',
     });
     super({
       adapter,

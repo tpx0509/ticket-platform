@@ -157,6 +157,55 @@ function encodeFromRow(row: ListRow, sort: TicketSort, order: TicketOrder): stri
     })
 }
 
+/**
+ * LIKE 里的 % 和 _ 是通配符，用户输入必须转义。
+ * 不转的话：搜一个 % 生成 '%%%'，全表返回；搜 _ 会匹配任意一个字。
+ *
+ * Prisma 的 contains 没有 escape 选项（issue #5161 挂了很久），
+ * 但 Postgres 的 LIKE 默认转义符就是反斜杠，所以这里手动加 \ 是有效的 ——
+ * 参数走绑定，不会被当成 SQL 注入，只是它到了 LIKE 里仍然是模式字符。
+ */
+function escapeLike(input: string): string {
+    return input.replace(/[\\%_]/g, (m) => `\\${m}`);
+}
+
+/**
+ * 所有筛选条件收在一处。cursor 和 offset 两种分页共用同一份 ——
+ * 分开拼的话，加一个筛选项就得改两遍，漏一处就是「某种分页方式筛不掉数据」。
+ */
+function buildWhere(orgId: string, query: ListTicketsQuery): Prisma.TicketWhereInput {
+    const where: Prisma.TicketWhereInput = {
+        orgId,
+        deletedAt: null,
+        status: query.status,
+        priority: query.priority,
+    };
+
+    // 用 !== undefined 判断，不能用 if (query.assigneeId)：
+    // 「筛未分配」传下来的是 null，falsy 判断会把它整个吞掉
+    if (query.assigneeId !== undefined) {
+        where.assigneeId = query.assigneeId;
+    }
+
+    if (query.createdFrom || query.createdTo) {
+        where.createdAt = {
+            ...(query.createdFrom ? { gte: query.createdFrom } : {}),
+            // lt 而不是 lte：createdTo 已经在 schema 里补到次日零点了
+            ...(query.createdTo ? { lt: query.createdTo } : {}),
+        };
+    }
+
+    if (query.q) {
+        const kw = escapeLike(query.q);
+        where.OR = [
+            { subject: { contains: kw, mode: 'insensitive' as const } },
+            { description: { contains: kw, mode: 'insensitive' as const } },
+        ];
+    }
+
+    return where;
+}
+
 @Injectable()
 export class TicketsRepository {
     constructor(private readonly prisma: PrismaService) {
@@ -168,12 +217,7 @@ export class TicketsRepository {
      */
     findList(orgId: string, query: ListTicketsQuery) {
         return this.prisma.withTenant(orgId, async (tx): Promise<ListPage> => {
-            const where: Prisma.TicketWhereInput = {
-                orgId,
-                deletedAt: null,
-                status: query.status,
-                priority: query.priority,
-            }
+            const where = buildWhere(orgId, query)
 
             if (query.mode === 'cursor') {
                 return this.listByCursor(tx, where, query)
@@ -203,10 +247,13 @@ export class TicketsRepository {
         }
 
         const rows = await tx.ticket.findMany({
-            where: {
-                ...where,
-                ...(cursor ? buildCursorWhere(cursor) : {}),
-            },
+            /**
+             * 必须用 AND 组合，不能 {...where, ...buildCursorWhere(cursor)}。
+             * 两边都可能有 OR：where 里的关键字搜索是一组 OR，
+             * cursor 条件是另一组 OR。对象展开时后一个键直接覆盖前一个 ——
+             * 结果是筛了个关键字，翻页时筛选静默失效，返回全量数据。
+             */
+            where: cursor ? { AND: [where, buildCursorWhere(cursor)] } : where,
             select: LIST_SELECT,
             orderBy: buildOrderBy(query.sort, query.order),
             // 多取一条当哨兵，用来判断还有没有下一页
