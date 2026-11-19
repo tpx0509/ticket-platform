@@ -2,10 +2,7 @@ import { Injectable } from "@nestjs/common"
 import { PrismaService } from "src/infra/prisma/prisma.service"
 import { AppError } from "src/common/error-codes"
 import type { Prisma } from "../generated/prisma/client"
-import { CreateTicketInput, ListTicketsQuery } from "./tickets.schema"
-
-/** cursor 里只放定位用的最小信息：上一页最后一条的排序键 */
-type ListCursor = { createdAt: string; id: string }
+import { CreateTicketInput, ListTicketsQuery, TicketOrder, TicketSort } from "./tickets.schema"
 
 /** 列表只返回这几列，description 这种大字段不进列表 */
 const LIST_SELECT = {
@@ -16,16 +13,6 @@ const LIST_SELECT = {
     priority: true,
     createdAt: true,
 } as const
-
-/**
- * 排序固定：时间倒序，同一时刻用 id 升序兜底。
- * 那个 id 不是装饰 —— 库里存在同一秒创建的多条工单，
- * 只按 createdAt 排会让它们的相对顺序不确定，翻页必然重或漏。
- */
-const LIST_ORDER_BY: Prisma.TicketOrderByWithRelationInput[] = [
-    { createdAt: 'desc' },
-    { id: 'asc' },
-]
 
 type ListRow = Prisma.TicketGetPayload<{ select: typeof LIST_SELECT }>
 
@@ -48,23 +35,31 @@ export type ListPageMeta = {
 export type ListPage = { data: ListRow[]; meta: ListPageMeta }
 
 /**
- * 编码成 base64url。
- * 不直接把 JSON 扔给客户端有两个原因：
- * 一是它出现在 JSON 响应里会变成一堆 \" 转义，客户端和日志都难读；
- * 二是 base64 之后它就是一段不透明字符串，没人会想着手改它拼参数。
+ * cursor 里除了锚点值，还必须记住「这是按什么顺序生成的」。
+ *
+ * 少了这两个字段，客户端拿 createdAt 的 cursor 去请求 number 排序时，
+ * 过滤条件还在比 createdAt、排序却在比 number，翻页会静默错乱 ——
+ * 不报错，只是偶尔少几条，这种 bug 最难查。
  */
+type ListCursor = {
+    sort: TicketSort
+    order: TicketOrder
+    /** 主排序键的值：sort=createdAt 时是 ISO 时间串，sort=number 时是编号 */
+    value: string | number
+    /** tiebreaker。主键值相同时靠它定位，必须和锚点一起进 cursor */
+    id: string
+}
+
 function encodeCursor(cursor: ListCursor): string {
     return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')
 }
 
 /**
- * cursor 是客户端原样传回来的字符串，形状和日期都得验。
+ * cursor 是客户端原样传回来的字符串，每个字段都得验。
  * 解析失败必须报 400 —— 静默当没传会让客户端一直拿到第一页，
  * 表现成「翻页没反应」，日志里还什么都不剩。
  */
-function decodeCursor(raw?: string): ListCursor | null {
-    if (!raw) return null
-
+function decodeCursor(raw: string): ListCursor {
     let parsed: unknown
     try {
         parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'))
@@ -73,14 +68,72 @@ function decodeCursor(raw?: string): ListCursor | null {
     }
 
     const c = parsed as Partial<ListCursor>
-    if (typeof c?.createdAt !== 'string' || typeof c?.id !== 'string') {
+
+    if (c?.sort !== 'createdAt' && c?.sort !== 'number') {
         throw new AppError('COMMON_VALIDATION_FAILED', 'cursor 内容不合法')
     }
-    if (Number.isNaN(new Date(c.createdAt).getTime())) {
-        throw new AppError('COMMON_VALIDATION_FAILED', 'cursor 时间不合法')
+    if (c?.order !== 'asc' && c?.order !== 'desc') {
+        throw new AppError('COMMON_VALIDATION_FAILED', 'cursor 内容不合法')
+    }
+    if (typeof c?.id !== 'string' || c.id.length === 0) {
+        throw new AppError('COMMON_VALIDATION_FAILED', 'cursor 内容不合法')
     }
 
-    return { createdAt: c.createdAt, id: c.id }
+    // value 的类型取决于 sort：拿一个时间串去比 number，会得到一堆莫名其妙的排序
+    if (c.sort === 'createdAt') {
+        if (typeof c.value !== 'string' || Number.isNaN(new Date(c.value).getTime())) {
+            throw new AppError('COMMON_VALIDATION_FAILED', 'cursor 时间不合法')
+        }
+    } else if (typeof c.value !== 'number' || !Number.isInteger(c.value) || c.value < 0) {
+        throw new AppError('COMMON_VALIDATION_FAILED', 'cursor 编号不合法')
+    }
+
+    return { sort: c.sort, order: c.order, value: c.value, id: c.id }
+}
+
+/**
+ * orderBy：主字段按 order，后面固定追加 id asc 作 tiebreaker。
+ * id 是 uuid，本身没有业务含义，方向固定成 asc 就够了 ——
+ * 让它跟着 order 变只会多一倍组合，没有收益。
+ *
+ * 用两个分支而不是 { [sort]: order } 算出来：计算属性的类型是 string 索引签名，
+ * Prisma 那套精确类型对不上，而且 sort 一旦多到包含 id 就会自己撞自己。
+ */
+function buildOrderBy(sort: TicketSort, order: TicketOrder): Prisma.TicketOrderByWithRelationInput[] {
+    const primary: Prisma.TicketOrderByWithRelationInput =
+        sort === 'createdAt' ? { createdAt: order } : { number: order }
+    return [primary, { id: 'asc' }]
+}
+
+/**
+ * 翻页条件 = 「排在锚点之后的行」。
+ *
+ * 主字段方向跟着 order 走（降序时找更小的，升序时找更大的）；
+ * 主字段相等的那一批，靠 id 继续往后数 —— 所以 id 恒为 gt（因为 tiebreaker 是 asc）。
+ * 四个分支全写出来，不用计算属性拼 key，类型能对上，也不容易写反。
+ */
+function buildCursorWhere(cursor: ListCursor): Prisma.TicketWhereInput {
+    if (cursor.sort === 'createdAt') {
+        const at = new Date(cursor.value as string)
+        return cursor.order === 'desc'
+            ? { OR: [{ createdAt: { lt: at } }, { createdAt: at, id: { gt: cursor.id } }] }
+            : { OR: [{ createdAt: { gt: at } }, { createdAt: at, id: { gt: cursor.id } }] }
+    }
+
+    const num = cursor.value as number
+    return cursor.order === 'desc'
+        ? { OR: [{ number: { lt: num } }, { number: num, id: { gt: cursor.id } }] }
+        : { OR: [{ number: { gt: num } }, { number: num, id: { gt: cursor.id } }] }
+}
+
+/** 用本页最后一条生成锚点，主字段按当前排序取 */
+function encodeFromRow(row: ListRow, sort: TicketSort, order: TicketOrder): string {
+    return encodeCursor({
+        sort,
+        order,
+        value: sort === 'createdAt' ? row.createdAt.toISOString() : row.number,
+        id: row.id,
+    })
 }
 
 @Injectable()
@@ -117,25 +170,24 @@ export class TicketsRepository {
         where: Prisma.TicketWhereInput,
         query: ListTicketsQuery,
     ): Promise<ListPage> {
-        const cursor = decodeCursor(query.cursor)
+        const cursor = query.cursor ? decodeCursor(query.cursor) : null
+
+        // 排序变了，旧 cursor 就失去意义。这里必须报错，不能忽略：
+        // 忽略的话服务端会拿一个错误的锚点继续翻，结果看着像数据丢了。
+        if (cursor && (cursor.sort !== query.sort || cursor.order !== query.order)) {
+            throw new AppError(
+                'COMMON_VALIDATION_FAILED',
+                `cursor 是按 ${cursor.sort} ${cursor.order} 生成的，与本次的 ${query.sort} ${query.order} 不一致，换排序要从第一页重新开始`,
+            )
+        }
 
         const rows = await tx.ticket.findMany({
             where: {
                 ...where,
-                // 排序是 createdAt desc + id asc，所以「下一页」= 时间更早，
-                // 或者时间相同但 id 更大。两个条件必须一起：
-                // 只写 createdAt < ... 会把同一时刻的其余几条整个跳过。
-                ...(cursor
-                    ? {
-                        OR: [
-                            { createdAt: { lt: new Date(cursor.createdAt) } },
-                            { createdAt: new Date(cursor.createdAt), id: { gt: cursor.id } },
-                        ],
-                    }
-                    : {}),
+                ...(cursor ? buildCursorWhere(cursor) : {}),
             },
             select: LIST_SELECT,
-            orderBy: LIST_ORDER_BY,
+            orderBy: buildOrderBy(query.sort, query.order),
             // 多取一条当哨兵，用来判断还有没有下一页
             take: query.pageSize + 1,
         })
@@ -151,9 +203,7 @@ export class TicketsRepository {
                 mode: 'cursor',
                 pageSize: query.pageSize,
                 hasNext,
-                nextCursor: hasNext && last
-                    ? encodeCursor({ createdAt: last.createdAt.toISOString(), id: last.id })
-                    : null,
+                nextCursor: hasNext && last ? encodeFromRow(last, query.sort, query.order) : null,
                 // cursor 模式不查总数，这三项为空是设计如此
                 pageNum: null,
                 total: null,
@@ -182,7 +232,7 @@ export class TicketsRepository {
             : await tx.ticket.findMany({
                 where,
                 select: LIST_SELECT,
-                orderBy: LIST_ORDER_BY,
+                orderBy: buildOrderBy(query.sort, query.order),
                 skip,
                 take: query.pageSize,
             })
@@ -200,9 +250,7 @@ export class TicketsRepository {
                 totalPages,
                 hasNext,
                 // 顺带给出锚点：客户端想从这一页切到 cursor 模式时直接拿去用
-                nextCursor: hasNext && last
-                    ? encodeCursor({ createdAt: last.createdAt.toISOString(), id: last.id })
-                    : null,
+                nextCursor: hasNext && last ? encodeFromRow(last, query.sort, query.order) : null,
             },
         }
     }

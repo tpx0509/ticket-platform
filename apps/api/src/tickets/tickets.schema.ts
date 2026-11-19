@@ -7,6 +7,16 @@ const pageSizeSchema = z.coerce.number().int().min(1).max(100);
 export const DEFAULT_PAGE_SIZE = 10;
 
 /**
+ * 可排序的字段。用 as const + 派生类型，而不是到处写 string：
+ * 打错字在编译期就报，且 orderBy 那边能直接拿到字面量类型。
+ */
+export const TICKET_SORT_FIELDS = ['createdAt', 'number'] as const;
+export type TicketSort = (typeof TICKET_SORT_FIELDS)[number];
+
+export const TICKET_ORDERS = ['asc', 'desc'] as const;
+export type TicketOrder = (typeof TICKET_ORDERS)[number];
+
+/**
  * 列表入参。两种分页方式共用一个 schema，由 transform 归一化成统一形状：
  *
  *   ?pageNum=2&pageSize=10    → offset 模式
@@ -29,6 +39,10 @@ export const listTicketsQuerySchema = z
         cursor: z.string().min(1).optional(),
         /** 显式指定分页方式，默认 offset。传了 cursor 时自动按 cursor 处理 */
         mode: z.enum(['offset', 'cursor']).optional(),
+        /** 排序字段，默认按创建时间 */
+        sort: z.enum(TICKET_SORT_FIELDS).default('createdAt'),
+        /** 排序方向，默认倒序（最新的在前） */
+        order: z.enum(TICKET_ORDERS).default('desc'),
     })
     .superRefine((q, ctx) => {
         // 两个名字都传了但值不一样，说明调用方自己没搞清楚要什么，直接报错
@@ -64,6 +78,8 @@ export const listTicketsQuerySchema = z
         cursor: q.cursor,
         // 带 cursor 的请求一定是想接着上一页翻，不管 mode 有没有写
         mode: (q.cursor !== undefined ? 'cursor' : (q.mode ?? 'offset')) as 'cursor' | 'offset',
+        sort: q.sort,
+        order: q.order
     }));
 
 export const createTicketSchema  = z.object({
