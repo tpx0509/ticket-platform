@@ -52,7 +52,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/orgs/{orgId}/tickets": {
+    "/api/v1/orgs": {
         parameters: {
             query?: never;
             header?: never;
@@ -60,71 +60,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 工单列表
-         * @description 分页（offset / cursor 两种模式）+ 排序 + 多条件筛选
+         * 我加入的组织
+         * @description 只返回状态为 active 的成员关系，附带当前角色；按组织名排序
          */
-        get: operations["TicketsController_list"];
-        put?: never;
-        /**
-         * 建单
-         * @description 需要 owner / admin / agent 角色，viewer 返回 403
-         */
-        post: operations["TicketsController_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/orgs/{orgId}/tickets/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 工单详情 */
-        get: operations["TicketsController_detail"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/orgs/{orgId}/tickets/{ticketId}/attachments": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 上传附件
-         * @description multipart/form-data，字段名必须是 file
-         */
-        post: operations["AttachmentsController_upload"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/orgs/{orgId}/tickets/{ticketId}/attachments/{id}/download": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * 下载附件
-         * @description 返回二进制流，Content-Disposition 带 UTF-8 文件名
-         */
-        get: operations["AttachmentsController_download"];
+        get: operations["OrgsController_mine"];
         put?: never;
         post?: never;
         delete?: never;
@@ -233,6 +172,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{orgId}/tickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 工单列表
+         * @description 分页（offset / cursor 两种模式）+ 排序 + 多条件筛选
+         */
+        get: operations["TicketsController_list"];
+        put?: never;
+        /**
+         * 建单
+         * @description 需要 owner / admin / agent 角色，viewer 返回 403
+         */
+        post: operations["TicketsController_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{orgId}/tickets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 工单详情 */
+        get: operations["TicketsController_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{orgId}/tickets/{ticketId}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 附件列表
+         * @description 按上传时间倒序，返回该工单下的全部附件
+         */
+        get: operations["AttachmentsController_list"];
+        put?: never;
+        /**
+         * 上传附件
+         * @description multipart/form-data，字段名必须是 file
+         */
+        post: operations["AttachmentsController_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{orgId}/tickets/{ticketId}/attachments/{id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 下载附件
+         * @description 返回二进制流，Content-Disposition 带 UTF-8 文件名
+         */
+        get: operations["AttachmentsController_download"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -296,184 +320,24 @@ export interface operations {
             };
         };
     };
-    TicketsController_list: {
+    OrgsController_mine: {
         parameters: {
-            query?: {
-                /** @description 分页模式，默认 offset */
-                mode?: "offset" | "cursor";
-                /** @description cursor 模式的游标，取上一页的 nextCursor */
-                cursor?: string;
-                /** @description offset 模式的页码，从 1 开始 */
-                pageNum?: number;
-                /** @description 每页条数，最大 100 */
-                pageSize?: number;
-                /** @description 排序方向 */
-                order?: "asc" | "desc";
-                /** @description 排序字段 */
-                sort?: "createdAt" | "number" | "priority";
-                /** @description 创建时间止，纯日期时含当天整天 */
-                createdTo?: string;
-                /** @description 创建时间起，2026-07-01 或完整时间串 */
-                createdFrom?: string;
-                /** @description 负责人 id；传 unassigned 筛未分配 */
-                assigneeId?: string;
-                /** @description 关键字，搜标题和描述 */
-                q?: string;
-                /** @description 优先级，可重复传 */
-                priority?: "low" | "normal" | "high" | "urgent";
-                /** @description 状态，可重复传 */
-                status?: string;
-            };
+            query?: never;
             header?: never;
-            path: {
-                /** @description 组织 id */
-                orgId: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
+            /** @description 组织数组，可能为空 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-        };
-    };
-    TicketsController_create: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description 客户端生成的 uuid。同一个 key 重发只会建一单，重放时响应带 Idempotent-Replay: true */
-                "Idempotency-Key"?: string;
-            };
-            path: {
-                /** @description 组织 id */
-                orgId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** @example 打印机连不上 */
-                    subject: string;
-                    /** @example 重启后依然报 E403 */
-                    description: string;
-                    /**
-                     * @default normal
-                     * @enum {string}
-                     */
-                    priority?: "low" | "normal" | "high" | "urgent";
-                };
-            };
-        };
-        responses: {
-            /** @description 建单成功（重放也是 201，靠响应头区分） */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description 超出限流：每分钟 5 单，响应头 Retry-After 是剩余秒数 */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    TicketsController_detail: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 工单 id */
-                id: string;
-                /** @description 组织 id */
-                orgId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 不存在，或不属于当前组织（两种情况都返回 404） */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    AttachmentsController_upload: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 组织 id */
-                orgId: string;
-                /** @description 工单 id */
-                ticketId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": {
-                    /**
-                     * Format: binary
-                     * @description 最大 10MB
-                     */
-                    file: string;
-                };
-            };
-        };
-        responses: {
-            /** @description 上传成功，返回附件记录 */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description 文件超过 10MB */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    AttachmentsController_download: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 组织 id */
-                orgId: string;
-                /** @description 工单 id */
-                ticketId: string;
-                /** @description 附件 id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 文件流 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description 附件不存在，或不属于这张工单 / 这个组织 */
-            404: {
+            /** @description 未登录 */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -595,6 +459,214 @@ export interface operations {
         responses: {
             /** @description 没带 token 或 token 已过期 */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    TicketsController_list: {
+        parameters: {
+            query?: {
+                /** @description 分页模式，默认 offset */
+                mode?: "offset" | "cursor";
+                /** @description cursor 模式的游标，取上一页的 nextCursor */
+                cursor?: string;
+                /** @description offset 模式的页码，从 1 开始 */
+                pageNum?: number;
+                /** @description 每页条数，最大 100 */
+                pageSize?: number;
+                /** @description 排序方向 */
+                order?: "asc" | "desc";
+                /** @description 排序字段 */
+                sort?: "createdAt" | "number" | "priority";
+                /** @description 创建时间止，纯日期时含当天整天 */
+                createdTo?: string;
+                /** @description 创建时间起，2026-07-01 或完整时间串 */
+                createdFrom?: string;
+                /** @description 负责人 id；传 unassigned 筛未分配 */
+                assigneeId?: string;
+                /** @description 关键字，搜标题和描述 */
+                q?: string;
+                /** @description 优先级，可重复传 */
+                priority?: "low" | "normal" | "high" | "urgent";
+                /** @description 状态，可重复传 */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                /** @description 组织 id */
+                orgId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    TicketsController_create: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 客户端生成的 uuid。同一个 key 重发只会建一单，重放时响应带 Idempotent-Replay: true */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                /** @description 组织 id */
+                orgId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @example 打印机连不上 */
+                    subject: string;
+                    /** @example 重启后依然报 E403 */
+                    description: string;
+                    /**
+                     * @default normal
+                     * @enum {string}
+                     */
+                    priority?: "low" | "normal" | "high" | "urgent";
+                };
+            };
+        };
+        responses: {
+            /** @description 建单成功（重放也是 201，靠响应头区分） */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 超出限流：每分钟 5 单，响应头 Retry-After 是剩余秒数 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    TicketsController_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 工单 id */
+                id: string;
+                /** @description 组织 id */
+                orgId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 不存在，或不属于当前组织（两种情况都返回 404） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    AttachmentsController_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 组织 id */
+                orgId: string;
+                /** @description 工单 id */
+                ticketId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 工单不存在，或不属于当前组织 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    AttachmentsController_upload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 组织 id */
+                orgId: string;
+                /** @description 工单 id */
+                ticketId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description 最大 10MB
+                     */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 上传成功，返回附件记录 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 文件超过 10MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    AttachmentsController_download: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 组织 id */
+                orgId: string;
+                /** @description 工单 id */
+                ticketId: string;
+                /** @description 附件 id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件流 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 附件不存在，或不属于这张工单 / 这个组织 */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

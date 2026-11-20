@@ -31,14 +31,43 @@ export interface TicketRow {
   createdAt: string
 }
 
-/** 详情：注意当前只返回这 5 个字段，没有 description / assigneeId / 附件 */
+export const ORGANIZATION_ROLES = ['owner', 'admin', 'agent', 'viewer'] as const
+export type OrgRole = (typeof ORGANIZATION_ROLES)[number]
+
+/** GET /orgs 的一项：我在这个组织里是谁、能干什么 */
+export interface OrgMembership {
+  /** 组织 id，拼接口路径用的就是它 */
+  id: string
+  name: string
+  slug: string
+  role: OrgRole
+  joinedAt: string | null
+}
+
+/** 工单上挂的人。只取这三个字段，别的一概不下发 */
+export interface TicketUserRef {
+  id: string
+  name: string
+  email: string
+}
+
+/** 详情：和建单接口返回同一个形状，前端只有一套类型 */
 export interface TicketDetail {
   id: string
   number: number
   subject: string
+  description: string
   status: TicketStatus
   priority: TicketPriority
+  priorityWeight: number
+  requesterId: string
+  assigneeId: string | null
+  requester: TicketUserRef
+  /** 没指派时是 null，不是缺字段 */
+  assignee: TicketUserRef | null
+  slaDueAt: string | null
   createdAt: string
+  updatedAt: string
 }
 
 export interface PageMeta {

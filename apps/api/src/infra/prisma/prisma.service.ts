@@ -114,6 +114,31 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       return fn(tx);
     });
   }
+
+  /**
+   * 用户级上下文：只看得到「属于这个用户」的行。
+   *
+   * 存在的唯一理由是组织切换器 —— 它要回答「我加入了哪些组织」，
+   * 而这个问题天生是跨租户的：还不知道 org_id，就没法先设 org_id。
+   * 用 withTenant 硬凑只能遍历所有组织，既慢又要先知道有哪些组织。
+   *
+   * 所以 memberships / organizations 的策略里多了一个分支
+   * （见迁移 20261120120000）：user_id = 当前用户时也允许读。
+   * 注意它只放宽「读」，WITH CHECK 仍然绑死在 app.org_id 上，
+   * 写操作照样不能跨租户。
+   *
+   * 和 withTenant 一样必须包事务：set local 出了事务就失效。
+   */
+  async withUser<T>(userId: string, fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    if (!UUID_RE.test(userId)) {
+      throw new Error(`user_id 不是合法 uuid：${userId}`);
+    }
+
+    return this.$transaction(async (tx) => {
+      await tx.$executeRaw`select set_config('app.user_id', ${userId}, true)`;
+      return fn(tx);
+    });
+  }
 }
 
 @Global()

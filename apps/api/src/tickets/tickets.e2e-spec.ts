@@ -134,6 +134,79 @@ describe('Tickets 接口', () => {
     expect(res.status).toBe(404);
   });
 
+  it('GET /orgs 返回我加入的组织和角色，且先调它不影响后续请求', async () => {
+    const res = await http.get('/api/v1/orgs').set('Authorization', `Bearer ${ownerToken}`);
+
+    expect(res.status).toBe(200);
+    const orgs = res.body.data as { id: string; slug: string; role: string }[];
+    expect(orgs.find((org) => org.slug === 'yunqi')?.role).toBe('owner');
+    // 同一个账号在两个组织里角色不同，切换器必须把角色一起带回来，前端才好挡按钮
+    expect(orgs.find((org) => org.slug === 'hengxing')?.role).toBe('viewer');
+
+    // 别人的组织不该出现。outsiderToken 是恒星 owner，和云启毫无关系
+    const other = await http.get('/api/v1/orgs').set('Authorization', `Bearer ${outsiderToken}`);
+    const slugs = (other.body.data as { slug: string }[]).map((org) => org.slug);
+    expect(slugs).toContain('hengxing');
+    expect(slugs).not.toContain('yunqi');
+  });
+
+  it('组织列表没带 token 返回 401', async () => {
+    const res = await http.get('/api/v1/orgs');
+    expect(res.status).toBe(401);
+  });
+
+  it('详情带上正文和创建人，不用再单独查用户表', async () => {
+    const row = await admin.ticket.findFirst({
+      where: { orgId: yunqiId, deletedAt: null },
+      select: { id: true },
+    });
+
+    const res = await http
+      .get(`/api/v1/orgs/${yunqiId}/tickets/${row!.id}`)
+      .set('Authorization', `Bearer ${ownerToken}`);
+
+    expect(res.status).toBe(200);
+    expect(typeof res.body.data.description).toBe('string');
+    expect(res.body.data.requester).toMatchObject({
+      id: expect.any(String),
+      name: expect.any(String),
+      email: expect.any(String),
+    });
+    // 建单时没指定负责人，关系是 null 而不是 undefined —— 前端 v-if 才判得准
+    expect(res.body.data).toHaveProperty('assignee');
+  });
+
+  it('附件列表查得到刚上传的文件，size 已从 BigInt 转成数字', async () => {
+    const row = await admin.ticket.findFirst({
+      where: { orgId: yunqiId, deletedAt: null },
+      select: { id: true },
+    });
+    const base = `/api/v1/orgs/${yunqiId}/tickets/${row!.id}/attachments`;
+
+    const upload = await http
+      .post(base)
+      .set('Authorization', `Bearer ${agentToken}`)
+      .attach('file', Buffer.from('hello attachment'), { filename: 'notice.txt', contentType: 'text/plain' });
+
+    expect(upload.status).toBe(201);
+    const attachmentId = upload.body.data.id as string;
+
+    const list = await http.get(base).set('Authorization', `Bearer ${ownerToken}`);
+    expect(list.status).toBe(200);
+
+    const files = list.body.data as { id: string; fileName: string; size: number }[];
+    expect(files.map((file) => file.id)).toContain(attachmentId);
+    // BigInt 直接进 JSON 会抛错，能返回数字说明转换做了
+    expect(typeof files[0]!.size).toBe('number');
+
+    // 换个组织再看同一张工单：能过 Guard（user01 在恒星是成员），但工单不属于恒星 → 404
+    const cross = await http
+      .get(`/api/v1/orgs/${hengxingId}/tickets/${row!.id}/attachments`)
+      .set('Authorization', `Bearer ${ownerToken}`);
+    expect(cross.status).toBe(404);
+    expect(cross.body.error.code).toBe('TICKET_NOT_FOUND');
+  });
+
   it('cursor 分页翻两页不重复，排序连续', async () => {
     const first = await http
       .get(`/api/v1/orgs/${yunqiId}/tickets`)

@@ -19,6 +19,31 @@ const LIST_SELECT = {
 type ListRow = Prisma.TicketGetPayload<{ select: typeof LIST_SELECT }>
 
 /**
+ * 详情比列表多的是「只有点开才需要」的字段：正文、创建人、负责人、更新时间。
+ *
+ * 两个关系用嵌套 select 而不是先查 id 再查 users —— users 表没有 RLS，
+ * 分两次查等于把「这个人属不属于本组织」的判断留在了应用层；
+ * 挂在 ticket 下面查，结果天然被工单的 org_id 约束住。
+ * 只取 name / email，不整行返回：password_hash 之类的字段不该有机会漏出去。
+ */
+const DETAIL_SELECT = {
+    id: true,
+    number: true,
+    subject: true,
+    description: true,
+    status: true,
+    priority: true,
+    priorityWeight: true,
+    requesterId: true,
+    assigneeId: true,
+    slaDueAt: true,
+    createdAt: true,
+    updatedAt: true,
+    requester: { select: { id: true, name: true, email: true } },
+    assignee: { select: { id: true, name: true, email: true } },
+} as const
+
+/**
  * 两种分页共用一个 meta 形状，前端只需要一张类型表：
  * total / pageNum / totalPages 在 cursor 模式下恒为 null —— 那是它的特性，
  * 不是没实现：cursor 分页本来就不去数总数，否则又要把 count(*) 加回来。
@@ -331,7 +356,7 @@ export class TicketsRepository {
                     orgId,
                     deletedAt: null
                 },
-                select: { id: true, number: true, subject: true, status: true, priority: true, createdAt: true },
+                select: DETAIL_SELECT,
             })
         })
     }
@@ -359,7 +384,9 @@ export class TicketsRepository {
                     // 不传 key 的请求完全不受幂等逻辑影响
                     idempotencyKey: params.idempotencyKey,
                     number: next
-                }
+                },
+                // 建单和详情返回同一个形状：前端只有一套类型，不用为「刚建的那条」写特例
+                select: DETAIL_SELECT,
             })
         })
     }
@@ -375,6 +402,7 @@ export class TicketsRepository {
         return this.prisma.withTenant(orgId, (tx) =>
             tx.ticket.findFirst({
                 where: { orgId, idempotencyKey },
+                select: DETAIL_SELECT,
             }),
         )
     }

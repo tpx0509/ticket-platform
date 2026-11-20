@@ -102,8 +102,31 @@ export class AttachmentsService {
         };
     }
 
-    async prepareDownload(orgId: string, ticketId: string, id: string): Promise<DownloadTarget> {
-        const row = await this.repo.findOne(orgId, ticketId, id);
+    /**
+     * 附件列表。
+     *
+     * 先查工单再查附件，而不是直接查附件返回空数组：
+     * 工单不存在 / 不属于本组织时必须 404，否则前端拿到 [] 会显示「还没有附件」，
+     * 用户以为文件丢了，其实是他拿着别的组织（或已删除）的工单 id。
+     */
+    async list(orgId: string, ticketId: string): Promise<UploadedAttachment[]> {
+        const ticket = await this.repo.findTicket(orgId, ticketId);
+        if (!ticket) throw new AppError('TICKET_NOT_FOUND');
+
+        const rows = await this.repo.findMany(orgId, ticketId);
+        // size 在库里是 BigInt，直接进 JSON.stringify 会抛
+        // "Do not know how to serialize a BigInt"，必须在这里转成 number
+        return rows.map((row) => ({
+            id: row.id,
+            fileName: row.fileName,
+            mimeType: row.mimeType,
+            size: Number(row.size),
+            checksum: row.checksum,
+            createdAt: row.createdAt,
+        }));
+    }
+
+    async prepareDownload(orgId: string, ticketId: string, id: string): Promise<DownloadTarget> {        const row = await this.repo.findOne(orgId, ticketId, id);
         if (!row) throw new AppError('ATTACHMENT_NOT_FOUND');
 
         const absolutePath = this.resolveStoragePath(row.storageKey);

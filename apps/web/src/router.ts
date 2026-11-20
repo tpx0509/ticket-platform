@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { orgsLoaded, loadOrgs } from './config'
 import { restore, session } from './session'
 
 const router = createRouter({
@@ -44,6 +45,21 @@ router.beforeEach(async (to) => {
   if (!session.user) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
+
+  /**
+   * 组织列表是后面所有请求的前提 —— 没有 orgId 就拼不出路径。
+   * 必须等它回来再放行，否则进列表页那一瞬间会用空 id 打一次 400。
+   *
+   * 拉失败不拦导航：页面自己会显示错误，总比卡在白屏上什么都不说强。
+   */
+  if (!orgsLoaded.value) {
+    try {
+      await loadOrgs()
+    } catch {
+      /* 忽略：列表页会用空 id 报出自己的错，比这里吞掉更有信息量 */
+    }
+  }
+
   return true
 })
 

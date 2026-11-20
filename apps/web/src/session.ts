@@ -3,6 +3,7 @@ import { computed, reactive } from 'vue'
 import { authApi } from '@/api'
 import { tokenStore } from '@/api/client'
 import type { User } from '@/api/types'
+import { clearOrgs } from './config'
 
 /**
  * 登录态就两个字段，没必要上 Pinia。
@@ -58,5 +59,7 @@ export async function logout(): Promise<void> {
   } finally {
     tokenStore.clear()
     session.user = null
+    // 组织列表属于上一个用户，不清掉的话换人登录会先看到别人的组织名
+    clearOrgs()
   }
 }

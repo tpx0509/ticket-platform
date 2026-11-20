@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { ticketApi } from '@/api'
@@ -9,7 +9,7 @@ import { ApiError } from '@/api/client'
 import { TICKET_PRIORITIES, TICKET_SORTS, TICKET_STATUSES } from '@/api/types'
 import type { ListQuery, PageMeta, PageMode, SortOrder, TicketPriority, TicketRow, TicketSort, TicketStatus } from '@/api/types'
 import TicketCreateDialog from '@/components/TicketCreateDialog.vue'
-import { ORG } from '@/config'
+import { currentOrg } from '@/config'
 import { PRIORITY_LABEL, PRIORITY_TAG, SORT_LABEL, STATUS_LABEL, STATUS_TAG, formatTime } from '@/labels'
 
 const router = useRouter()
@@ -73,7 +73,7 @@ async function load(): Promise<void> {
   }
 
   try {
-    const result = await ticketApi.list(ORG.id, query)
+    const result = await ticketApi.list(currentOrg.id, query)
     rows.value = result.data
     meta.value = result.meta
   } catch (error) {
@@ -158,6 +158,19 @@ function onCreated(): void {
 onMounted(() => {
   void load()
 })
+
+/**
+ * 在顶部切了组织，这里必须重新拉 —— 筛选条件保留着，但数据换了一批。
+ * 翻页状态要一起清，否则 pageNum 还停在第 5 页，新组织只有 2 页会直接空列表。
+ */
+watch(
+  () => currentOrg.id,
+  () => {
+    if (!currentOrg.id) return
+    resetPaging()
+    void load()
+  },
+)
 </script>
 
 <template>
@@ -166,7 +179,7 @@ onMounted(() => {
       <div>
         <h1 class="page-title">工单</h1>
         <p class="muted sub">
-          {{ ORG.name }} · 共 <b>{{ meta?.total ?? '—' }}</b> 条
+          {{ currentOrg.name }} · 共 <b>{{ meta?.total ?? '—' }}</b> 条
           <span v-if="mode === 'cursor'">（cursor 模式不数总数）</span>
         </p>
       </div>
@@ -316,7 +329,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <TicketCreateDialog v-model="createOpen" :org-id="ORG.id" @created="onCreated" />
+    <TicketCreateDialog v-model="createOpen" :org-id="currentOrg.id" @created="onCreated" />
   </div>
 </template>
 

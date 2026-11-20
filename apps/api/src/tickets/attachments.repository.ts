@@ -43,4 +43,27 @@ export class AttachmentsRepository {
             }),
         );
     }
+
+    /**
+     * 列表显式列出要返回的列，而不是整行 select。
+     * storageKey 是磁盘路径的一部分，属于服务端内部细节 —— 客户端拿到它
+     * 只会用来猜别的文件，起不到任何作用。
+     */
+    findMany(orgId: string, ticketId: string) {
+        return this.prisma.withTenant(orgId, (tx) =>
+            tx.attachment.findMany({
+                where: { orgId, ticketId },
+                select: {
+                    id: true,
+                    fileName: true,
+                    mimeType: true,
+                    size: true,
+                    checksum: true,
+                    createdAt: true,
+                },
+                // 新传的排前面。附件不像工单需要稳定翻页，一次全给就够了
+                orderBy: { createdAt: 'desc' },
+            }),
+        );
+    }
 }

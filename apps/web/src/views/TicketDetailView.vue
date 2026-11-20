@@ -8,7 +8,7 @@ import { ticketApi } from '@/api'
 import { ApiError } from '@/api/client'
 import type { TicketDetail } from '@/api/types'
 import AttachmentPanel from '@/components/AttachmentPanel.vue'
-import { ORG } from '@/config'
+import { currentOrg } from '@/config'
 import { PRIORITY_LABEL, PRIORITY_TAG, STATUS_LABEL, STATUS_TAG, formatTime } from '@/labels'
 
 const props = defineProps<{ id: string }>()
@@ -22,7 +22,7 @@ async function load(): Promise<void> {
   loading.value = true
   errorText.value = ''
   try {
-    ticket.value = await ticketApi.detail(ORG.id, props.id)
+    ticket.value = await ticketApi.detail(currentOrg.id, props.id)
   } catch (error) {
     ticket.value = null
     errorText.value =
@@ -60,7 +60,7 @@ onMounted(() => {
       <div class="card header">
         <div class="header-main">
           <div class="crumbs num muted">
-            {{ ORG.name }} / #{{ ticket.number }}
+            {{ currentOrg.name }} / #{{ ticket.number }}
           </div>
           <h1 class="title">{{ ticket.subject }}</h1>
           <div class="tags">
@@ -76,16 +76,12 @@ onMounted(() => {
         <div class="col-main">
           <section class="card block">
             <h2 class="block-title">描述</h2>
-            <!-- 详情接口的 select 里没有 description，只能把缺口摆出来 -->
-            <el-alert type="warning" :closable="false">
-              详情接口目前只返回 编号 / 标题 / 状态 / 优先级 / 创建时间。
-              描述、负责人、评论都不在返回字段里 —— 要展示得先补后端
-              <code>TicketsRepository.findById</code> 的 select。
-            </el-alert>
+            <p v-if="ticket.description" class="desc">{{ ticket.description }}</p>
+            <p v-else class="muted">建单时没填描述</p>
           </section>
 
           <section class="card block">
-            <AttachmentPanel :org-id="ORG.id" :ticket-id="ticket.id" />
+            <AttachmentPanel :org-id="currentOrg.id" :ticket-id="ticket.id" />
           </section>
         </div>
 
@@ -103,6 +99,14 @@ onMounted(() => {
 
             <dt>创建时间</dt>
             <dd class="num">{{ formatTime(ticket.createdAt) }}</dd>
+
+            <dt>创建人</dt>
+            <dd>{{ ticket.requester.name }}</dd>
+
+            <dt>负责人</dt>
+            <!-- 没指派时后端返回 null。写「未指派」而不是留空，能区分「没人」和「没这个字段」 -->
+            <dd v-if="ticket.assignee">{{ ticket.assignee.name }}</dd>
+            <dd v-else class="muted">未指派</dd>
 
             <dt>工单 ID</dt>
             <dd class="mono">{{ ticket.id }}</dd>
@@ -175,6 +179,15 @@ onMounted(() => {
   gap: 10px 12px;
   margin: 0;
   font-size: 13px;
+}
+
+/* white-space: pre-wrap —— 用户填的换行要保留，不然一段多行描述会挤成一坨 */
+.desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .props dt {

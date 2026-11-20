@@ -77,6 +77,20 @@ export class AttachmentsController {
     }
 
     /**
+     * 列表。放在 @Get(':id/download') 之前只是习惯 —— 两者路径段数不同，
+     * 'attachments' 后面没有第二段，不会和 ':id/download' 撞车。
+     */
+    @Get()
+    @ApiOperation({ summary: '附件列表', description: '按上传时间倒序，返回该工单下的全部附件' })
+    @ApiResponse({ status: 404, description: '工单不存在，或不属于当前组织' })
+    list(
+        @Param('orgId', new ZodValidationPipe(z.uuid())) orgId: string,
+        @Param('ticketId', new ZodValidationPipe(z.uuid())) ticketId: string,
+    ) {
+        return this.service.list(orgId, ticketId);
+    }
+
+    /**
      * 这里用 @Res() 全手动写响应，而不是 @Res({ passthrough: true }) + StreamableFile。
      * 因为全局 ResponseInterceptor 会把返回值包成 { data, meta } —— 二进制流被包进去就废了。
      * 用 @Res() 之后 Nest 不再自动发送响应，所以下面必须自己 pipe。

@@ -5,6 +5,7 @@ import type {
   CreateTicketBody,
   ListQuery,
   LoginResult,
+  OrgMembership,
   TicketDetail,
   TicketListResult,
   User,
@@ -52,6 +53,13 @@ export const authApi = {
   },
 }
 
+export const orgApi = {
+  /** 我加入的组织。登录后第一件事就是问它，拿不到 orgId 什么都请求不了 */
+  mine(): Promise<OrgMembership[]> {
+    return http.send<OrgMembership[]>('/orgs')
+  },
+}
+
 export const ticketApi = {
   list(orgId: string, query: ListQuery): Promise<TicketListResult> {
     return http.send<TicketListResult>(`/orgs/${orgId}/tickets`, { query: toQuery(query) })
@@ -77,6 +85,10 @@ export const ticketApi = {
 }
 
 export const attachmentApi = {
+  list(orgId: string, ticketId: string): Promise<Attachment[]> {
+    return http.send<Attachment[]>(`/orgs/${orgId}/tickets/${ticketId}/attachments`)
+  },
+
   upload(orgId: string, ticketId: string, file: File): Promise<Attachment> {
     const form = new FormData()
     // 字段名必须是 file，跟后端 FileInterceptor('file') 对齐

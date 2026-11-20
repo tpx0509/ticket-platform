@@ -4,19 +4,33 @@ import { ElMessage } from 'element-plus'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { ORG } from './config'
+import { currentOrg, orgList, switchOrg } from './config'
 import { logout, session } from './session'
 
 const route = useRoute()
 const router = useRouter()
 
 const isPublic = computed(() => route.meta.public === true)
-const orgName = ORG.name
+const orgName = computed(() => currentOrg.name)
 
 async function handleLogout(): Promise<void> {
   await logout()
   ElMessage.success('已退出')
   await router.push({ name: 'login' })
+}
+
+/**
+ * 切组织。
+ *
+ * el-select 的 change 回调参数类型很宽（string | number | boolean | undefined），
+ * 直接当 string 用会被 typecheck 拦，所以先收窄。
+ * 切完全都回列表页：当前详情页的工单属于旧组织，留在原地只会 404。
+ */
+async function handleSwitchOrg(value: unknown): Promise<void> {
+  if (typeof value !== 'string') return
+  switchOrg(value)
+  ElMessage.success(`已切换到 ${currentOrg.name}`)
+  await router.push({ name: 'tickets' })
 }
 </script>
 
@@ -36,7 +50,16 @@ async function handleLogout(): Promise<void> {
       </nav>
 
       <div class="topbar-right">
-        <el-tag size="small" effect="plain" type="info">{{ orgName }}</el-tag>
+        <el-select
+          v-if="orgList.length > 1"
+          size="small"
+          class="org-select"
+          :model-value="currentOrg.id"
+          @change="handleSwitchOrg"
+        >
+          <el-option v-for="org in orgList" :key="org.id" :label="org.name" :value="org.id" />
+        </el-select>
+        <el-tag v-else size="small" effect="plain" type="info">{{ orgName }}</el-tag>
         <el-dropdown trigger="click" @command="handleLogout">
           <span class="user-trigger">
             {{ session.user?.name ?? session.user?.email }}
@@ -131,6 +154,10 @@ async function handleLogout(): Promise<void> {
   align-items: center;
   gap: 14px;
   margin-left: auto;
+}
+
+.org-select {
+  width: 132px;
 }
 
 .user-trigger {

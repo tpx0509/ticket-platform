@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Download, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 
 import { attachmentApi, saveBlob } from '@/api'
 import { ApiError } from '@/api/client'
@@ -10,12 +10,29 @@ import { formatSize, formatTime } from '@/labels'
 
 const props = defineProps<{ orgId: string; ticketId: string }>()
 
-/** 只记录本次会话上传的，刷新后清空 —— 后端没有附件列表接口 */
 const files = ref<Attachment[]>([])
+const loading = ref(false)
 const uploading = ref(false)
 const input = ref<HTMLInputElement>()
 
 const MAX_SIZE = 10 * 1024 * 1024
+
+/**
+ * 列表来自后端，不再是「只记本次会话上传的」。
+ * 上传成功后不往数组里 unshift，而是整份重拉 —— 服务端按 createdAt 倒序，
+ * 本地插队容易和它的排序打架，也测不出列表接口有没有真生效。
+ */
+async function load(): Promise<void> {
+  if (!props.ticketId) return
+  loading.value = true
+  try {
+    files.value = await attachmentApi.list(props.orgId, props.ticketId)
+  } catch (error) {
+    ElMessage.error(error instanceof ApiError ? error.message : '附件列表加载失败')
+  } finally {
+    loading.value = false
+  }
+}
 
 async function onPick(event: Event): Promise<void> {
   const element = event.target as HTMLInputElement
@@ -32,8 +49,8 @@ async function onPick(event: Event): Promise<void> {
   uploading.value = true
   try {
     const attachment = await attachmentApi.upload(props.orgId, props.ticketId, file)
-    files.value.unshift(attachment)
     ElMessage.success(`已上传 ${attachment.fileName}`)
+    await load()
   } catch (error) {
     ElMessage.error(error instanceof ApiError ? error.message : '上传失败')
   } finally {
@@ -49,10 +66,22 @@ async function download(file: Attachment): Promise<void> {
     ElMessage.error(error instanceof ApiError ? error.message : '下载失败')
   }
 }
+
+onMounted(() => {
+  void load()
+})
+
+// 同一组件在两张工单之间复用（路由参数变了但组件没销毁）时也要重拉
+watch(
+  () => props.ticketId,
+  () => {
+    void load()
+  },
+)
 </script>
 
 <template>
-  <div class="attachments">
+  <div v-loading="loading" class="attachments">
     <div class="head">
       <span class="title">附件</span>
       <el-button size="small" :icon="UploadFilled" :loading="uploading" @click="input?.click()">
@@ -60,11 +89,6 @@ async function download(file: Attachment): Promise<void> {
       </el-button>
       <input ref="input" type="file" hidden @change="onPick" />
     </div>
-
-    <el-alert type="info" :closable="false" class="gap-hint">
-      只列出本次会话上传的文件。后端还没有「附件列表」接口，刷新页面后历史附件看不到 ——
-      这是当前接口的缺口，不是上传失败。
-    </el-alert>
 
     <ul v-if="files.length" class="file-list">
       <li v-for="file in files" :key="file.id" class="file">
@@ -78,7 +102,7 @@ async function download(file: Attachment): Promise<void> {
       </li>
     </ul>
 
-    <p v-else class="empty muted">还没有附件</p>
+    <p v-else-if="!loading" class="empty muted">还没有附件</p>
   </div>
 </template>
 
@@ -98,10 +122,6 @@ async function download(file: Attachment): Promise<void> {
 .title {
   font-size: 14px;
   font-weight: 600;
-}
-
-.gap-hint {
-  font-size: 12px;
 }
 
 .file-list {
