@@ -68,6 +68,7 @@ ticket-platform/
 │   └── shared/              共享类型、DTO、错误码
 ├── infra/
 │   ├── docker/init/         数据库初始化脚本（扩展、角色）
+│   ├── docker/migrate.sh    容器启动时的一次性迁移脚本
 │   └── nginx/               反向代理与 TLS 配置
 ├── docs/
 │   ├── erd.md               数据模型
@@ -75,22 +76,35 @@ ticket-platform/
 │   ├── response-format.md   统一响应与错误码
 │   ├── conventions.md       提交、分支、命名规范
 │   └── adr/                 架构决策记录
-├── docker-compose.yml
+├── Dockerfile               多阶段构建：deps -> build -> migrate / runner
+├── docker-compose.yml       app + postgres + redis + 一次性 migrate
 └── .env.example
 ```
 
 ## 本地启动
 
-前置：Docker Desktop、Node 22、pnpm。
+### 一条命令跑整套（Docker）
+
+新机器只需要 Docker：
 
 ```bash
 cp .env.example .env          # 首次
-pnpm install
-pnpm db:up                    # 起 PostgreSQL 与 Redis
-pnpm db:psql                  # 验证连通
+docker compose up -d --build
+curl http://localhost:4000/health/ready
 ```
 
-应用尚在按里程碑逐层接入，启动命令随各里程碑补齐。
+API 文档 `http://localhost:4000/api-docs`，首次启动自动建管理员（账号见 `.env` 的 `BOOTSTRAP_ADMIN_*`）。详见 [开发环境搭建](docs/dev-setup.md) 第七节。
+
+### 开发模式（宿主机热重载）
+
+前置：Docker Desktop、Node 22、pnpm。
+
+```bash
+pnpm install
+pnpm db:up                    # 只起 PostgreSQL 与 Redis
+pnpm db:psql                  # 验证连通
+pnpm api:dev                  # API 跑在 4800，改代码即时重载
+```
 
 ## 环境变量
 

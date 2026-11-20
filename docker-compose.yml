@@ -1,8 +1,93 @@
-# 本地与单机环境的基础设施。应用进程跑在宿主机上（便于热重载），
-# 只有有状态服务进容器。生产部署用 infra/docker/docker-compose.prod.yml。
+# 一条命令起整套应用：docker compose up（首次会构建镜像）。
+# 新机器只要装了 Docker，不需要 Node、不需要本机装 PostgreSQL。
+# 只想跑有状态服务、应用留在宿主机热重载时，用 pnpm db:up（只起 postgres + redis）。
+#
+# 端口分工：
+#   API_HOST_PORT  应用映射到宿主机的端口，默认 4000。
+#                  和宿主机上 pnpm api:dev 使用的 API_PORT(4800) 分开，避免抢端口。
+#   POSTGRES_PORT / REDIS_PORT  保留原有映射，方便宿主机的 psql、redis-cli 直连排查。
 name: ticket-platform
 
 services:
+  # ---------------------------------------------------------------- 应用
+  app:
+    build:
+      context: .
+      # 只取最终运行层：生产依赖 + 编译产物，没有源码和 devDependencies
+      target: runner
+    image: ticket-platform-api:local
+    container_name: td-api
+    restart: unless-stopped
+    # 迁移没成功就不启动：宁可起不来，也不要拿半迁移的库对外提供服务
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # 容器内固定 4000，宿主机端口由 API_HOST_PORT 决定，两者互不影响
+      API_PORT: 4000
+      NODE_ENV: ${NODE_ENV:-development}
+      # 连接串在这里现拼：宿主机 .env 里的 DATABASE_URL 指向 localhost，
+      # 直接抄进容器会连到自己。服务名 postgres / redis 就是 compose 网络里的 DNS。
+      DATABASE_URL: "postgresql://ticket_app:${APP_DB_PASSWORD:-devlocal_app}@postgres:5432/${POSTGRES_DB:-ticket_dev}?schema=public&connection_limit=10"
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+      REDIS_URL: "redis://redis:6379/0"
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev_only_access_secret_change_me_before_use}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev_only_refresh_secret_change_me_before_use}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-900}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-604800}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-deepseek-chat}
+      LLM_FAST_MODEL: ${LLM_FAST_MODEL:-deepseek-chat}
+      LLM_EMBED_MODEL: ${LLM_EMBED_MODEL:-text-embedding-v3}
+      LLM_EMBED_DIM: ${LLM_EMBED_DIM:-1024}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      # 上传目录指向卷挂载点，不写进容器可写层：容器重建后附件还在
+      STORAGE_LOCAL_DIR: /data/uploads
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-10485760}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${API_HOST_PORT:-4000}:4000"
+    volumes:
+      - uploads:/data/uploads
+    healthcheck:
+      # 用就绪探针而不是存活探针：DB 或 Redis 不通时容器显示 unhealthy，
+      # 而不是「进程活着所以一切正常」
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health/ready >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 25s
+
+  # ---------------------------------------------------------------- 一次性迁移
+  # 用独立镜像跑：需要 prisma CLI 和 psql，这些不该出现在 app 运行层里。
+  migrate:
+    build:
+      context: .
+      target: migrate
+    image: ticket-platform-migrate:local
+    container_name: td-migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # psql 不认 Prisma 的 ?schema=public 参数，所以这条串不带查询参数
+      DATABASE_URL_MIGRATE: "postgresql://${POSTGRES_USER:-ticket}:${POSTGRES_PASSWORD:-devlocal123}@postgres:5432/${POSTGRES_DB:-ticket_dev}"
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-devlocal_app}
+      # bootstrap 幂等：库里已有组织就跳过。把邮箱留空就跳过初始化。
+      BOOTSTRAP_ORG_NAME: ${BOOTSTRAP_ORG_NAME:-云启科技}
+      BOOTSTRAP_ORG_SLUG: ${BOOTSTRAP_ORG_SLUG:-yunqi}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@yunqi.local}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-DevOnly123456}
+
+  # ---------------------------------------------------------------- 有状态服务
   postgres:
     # 官方 pgvector 镜像 = PostgreSQL 16 + vector 扩展预编译
     image: pgvector/pgvector:pg16
@@ -71,3 +156,5 @@ services:
 volumes:
   pgdata:
   redisdata:
+  # 附件文件。数据库里只存路径，实体落在这个卷里。
+  uploads:

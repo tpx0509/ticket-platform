@@ -133,6 +133,72 @@ docker compose --profile tools up -d adminer
 
 访问 `http://localhost:8080`，服务器填 `postgres`，用户名 `ticket`，密码见 `.env`，库名 `ticket_dev`。
 
+## 七、容器化跑整套应用（D15）
+
+新机器只要装了 Docker，不装 Node、不装 PostgreSQL，一条命令就能把 API + 数据库 + Redis 全跑起来：
+
+```powershell
+cd E:\newProject\ticket-platform
+docker compose up -d --build
+```
+
+首次执行会做四件事，顺序不能乱：
+
+1. 构建 `app` 镜像（多阶段：装依赖 → 编译 → 只留生产依赖和 `dist`，非 root 运行）。
+2. `postgres`、`redis` 起来并通过健康检查。
+3. `migrate` 一次性容器跑完就退出：执行迁移 → 给 `ticket_app` 设密码 → 初始化管理员（幂等）。
+4. `app` 等 `migrate` 成功退出后才启动，映射到宿主机端口。
+
+验证：
+
+```powershell
+docker compose ps                                  # app 应为 (healthy)
+curl http://localhost:4000/health/ready            # database / cache 都是 ok
+# 浏览器打开 http://localhost:4000/api-docs
+```
+
+首次启动会自动建一个管理员，账号密码取 `.env` 里的 `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD`（默认 `admin@yunqi.local` / `DevOnly123456`）。库里已经有组织时这步会跳过，不会覆盖任何数据。
+
+### 端口怎么分
+
+| 变量 | 含义 |
+|---|---|
+| `API_PORT=4800` | 宿主机上 `pnpm api:dev` 的端口，用 Node 直接跑时用 |
+| `API_HOST_PORT=4000` | 容器里的 app 映射到宿主机的端口 |
+
+两个分开是有意的：容器里的 app 和宿主机的 `api:dev` 可以同时开着，互不抢端口。要让前端 dev server 指向容器里的 API，把 `apps/web` 的代理地址改成 4000 即可。
+
+### 数据存在哪
+
+| 卷 | 内容 |
+|---|---|
+| `ticket-platform_pgdata` | 数据库全部数据 |
+| `ticket-platform_redisdata` | Redis AOF |
+| `ticket-platform_uploads` | 附件实体文件（库里只存路径） |
+
+`docker compose down` 只停容器，卷保留；`docker compose down -v` 连卷一起删，等于清库重建。上传目录的属主是镜像里就建好的 `node` 用户，所以容器以非 root 运行也能写入。
+
+### 常用命令
+
+```powershell
+pnpm docker:up        # 构建并启动整套
+pnpm docker:ps        # 看状态
+pnpm docker:logs      # 跟 app 日志
+pnpm docker:migrate   # 单独重跑一次迁移（改完 schema 后）
+pnpm docker:down      # 停掉，保留数据
+pnpm docker:reset     # 删卷重建（数据全清）
+pnpm db:up            # 只起 postgres + redis，app 留在宿主机热重载
+```
+
+改了代码要重新构建才生效：`docker compose up -d --build`。容器里的 `app` 没有挂源码，也不做热重载——开发期还是用 `pnpm api:dev`，容器化是给「验证整套能不能在新机器上跑」用的。
+
+### 几条容易踩的线
+
+- `.env` 里的 `APP_DB_PASSWORD` 必须和 `DATABASE_URL` 里的密码一致。容器启动时会用前者改数据库里 `ticket_app` 的密码，两边不一致的话宿主机的 `api:dev` 立刻连不上。
+- 容器里的连接串是 compose 现拼的（`postgres` / `redis` 是服务名）。不要把宿主机 `.env` 的 `DATABASE_URL`（指向 `localhost`）直接塞进容器，那样容器会连自己。
+- 默认 `NODE_ENV=development` 且 JWT 密钥是 `dev_only` 开头的占位值，只为本地一条命令能跑。真部署要改成 `production` 并换掉密钥——`dev_only` 前缀在生产模式下会被配置校验直接拒绝启动。
+- 前端（`apps/web`）这次不进容器。它是 Vite 构建的静态产物，留给 D17 用 Nginx 托管。
+
 ## 常见故障
 
 | 现象 | 原因 | 处理 |

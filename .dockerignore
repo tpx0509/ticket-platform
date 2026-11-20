@@ -1,0 +1,34 @@
+# 构建上下文 = docker build 时发给守护进程的那份目录。
+# 这份清单决定「哪些东西不进镜像」，规则只有两类：本机能生成的、和本机独有的。
+
+# 依赖与产物：镜像里会重新装、重新编，带进去只会拖慢并且可能带来平台不匹配的二进制
+node_modules
+**/node_modules
+dist
+**/dist
+# 增量编译的缓存文件必须排除：它记录的是宿主机的路径和文件哈希，
+# 带进镜像会让 tsc 误判「已编译过」，直接跳过，最终 dist 是空的。
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# 本地数据：数据库卷、上传文件、日志
+.data
+**/.data
+uploads
+*.log
+coverage
+
+# 配置：.env 里有真实密钥，不能进镜像；镜像靠运行时注入环境变量
+.env
+.env.*
+!.env.example
+
+# 版本库与编辑器
+.git
+.gitignore
+.vscode
+.idea
+
+# Prisma 生成物：每次构建都用 prisma generate 重新生成，
+# 带进去反而可能拿到宿主机（Windows）生成的旧代码
+**/generated/prisma
