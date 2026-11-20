@@ -12,6 +12,26 @@
 
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:4800/api/v1'
 
+/**
+ * 开发期最容易踩的一个坑，提前喊一声。
+ *
+ * refresh_token 是 SameSite=Lax 的 cookie，跨站请求根本不会带上它。
+ * 而 127.0.0.1 和 localhost 在浏览器眼里是两个不同的站（端口不影响）。
+ * 所以页面开 127.0.0.1:5173、接口又是 localhost:4800 时：
+ * 登录能成（Set-Cookie 里写的是 localhost），但 access 一过期就换不了签，
+ * 表现为「刷新页面直接跳登录」，光看代码完全猜不到。
+ */
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  const apiHost = new URL(BASE).hostname
+  if (apiHost !== window.location.hostname) {
+    console.warn(
+      `[auth] 页面域名是 ${window.location.hostname}，接口域名是 ${apiHost}，两者不是同一个站点，` +
+        `SameSite=Lax 的 refresh_token 不会随请求发出，token 过期后会被踢回登录页。` +
+        `开发时请统一用 http://localhost:5173 打开。`,
+    )
+  }
+}
+
 /** accessToken 存在 localStorage：刷新页面不丢。refreshToken 在 httpOnly cookie 里，JS 碰不到。 */
 const TOKEN_KEY = 'ticket.accessToken'
 

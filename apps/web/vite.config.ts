@@ -18,6 +18,10 @@ export default defineConfig({
   server: {
     // 显式写 127.0.0.1：默认只监听 ::1（IPv6），部分工具和 curl 连不上。
     // 浏览器访问 http://localhost:5173 时会自动回退到 IPv4，不影响使用。
+    //
+    // 注意：地址栏必须写 localhost，不能写 127.0.0.1。
+    // refresh_token 是 SameSite=Lax 的 cookie，127.0.0.1 和 localhost 属于不同的站，
+    // 页面开在 127.0.0.1 时换签请求带不上 cookie，token 一过期就被踢回登录页。
     host: '127.0.0.1',
     port: 5173,
     strictPort: true,
