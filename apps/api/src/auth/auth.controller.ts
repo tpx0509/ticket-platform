@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 
 import { CurrentUserId } from '../common/current-user.decorator';
@@ -19,6 +20,7 @@ import {
 } from './auth.schema';
 import { AuthService, type RequestMeta } from './auth.service';
 
+@ApiTags('auth')
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -28,6 +30,19 @@ export class AuthController {
 
   /** POST /api/v1/auth/register —— @Post 默认 201，不用额外指定 */
   @Post('register')
+  @ApiOperation({ summary: '注册', description: '返回 201；邮箱已存在返回 409' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['email', 'password', 'name'],
+      additionalProperties: false,
+      properties: {
+        email: { type: 'string', format: 'email', example: 'zhangsan@example.com' },
+        password: { type: 'string', minLength: 8, maxLength: 128, example: 'secret123' },
+        name: { type: 'string', minLength: 1, maxLength: 50, example: '张三' },
+      },
+    },
+  })
   register(@Body(new ZodValidationPipe(registerSchema)) body: RegisterInput) {
     return this.service.register(body);
   }
@@ -43,6 +58,23 @@ export class AuthController {
    */
   @Post('login')
   @HttpCode(200)
+  @ApiOperation({
+    summary: '登录',
+    description: 'accessToken 在响应体，refreshToken 只写 httpOnly cookie，不进 body',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['email', 'password'],
+      additionalProperties: false,
+      properties: {
+        email: { type: 'string', format: 'email', example: 'user01@example.com' },
+        password: { type: 'string', example: 'DevPassw0rd!' },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: '登录成功，响应头带 Set-Cookie' })
+  @ApiResponse({ status: 401, description: '邮箱或密码错误（两种情况返回同一句话）' })
   async login(
     @Body(new ZodValidationPipe(loginSchema)) body: LoginInput,
     @Req() req: Request,
@@ -56,6 +88,8 @@ export class AuthController {
   /** POST /api/v1/auth/refresh —— 用 cookie 里的 refresh token 换新的 access */
   @Post('refresh')
   @HttpCode(200)
+  @ApiOperation({ summary: '刷新 access token', description: '只读 cookie 里的 refreshToken，不需要 body' })
+  @ApiResponse({ status: 200, description: '刷新成功；旧 refreshToken 立即失效（轮换）' })
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const raw = req.cookies?.[REFRESH_COOKIE] as string | undefined;
     if (!raw) throw new AppError('COMMON_UNAUTHORIZED', '缺少 refresh token');
@@ -68,6 +102,7 @@ export class AuthController {
   /** POST /api/v1/auth/logout —— 撤销 refresh token 并清 cookie */
   @Post('logout')
   @HttpCode(204)
+  @ApiOperation({ summary: '登出', description: '撤销 refresh token 并清 cookie，返回 204 无响应体' })
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     await this.service.logout(req.cookies?.[REFRESH_COOKIE] as string | undefined);
     res.clearCookie(REFRESH_COOKIE, clearRefreshCookieOptions(this.config.get('COOKIE_SECURE')));
@@ -76,6 +111,9 @@ export class AuthController {
   /** GET /api/v1/auth/me —— 受保护路由，不带 token 进不来 */
   @Get('me')
   @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: '当前用户', description: '拿 accessToken 换自己的基本信息' })
+  @ApiResponse({ status: 401, description: '没带 token 或 token 已过期' })
   me(@CurrentUserId() userId: string) {
     return this.service.me(userId);
   }

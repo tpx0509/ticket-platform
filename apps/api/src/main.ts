@@ -2,32 +2,30 @@ import 'reflect-metadata';
 
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import cookieParser from 'cookie-parser';
 
 import { AppModule } from './app.module';
+import { configureApp } from './app.setup';
 import { JsonLogger } from './common/json-logger';
-import { requestContextMiddleware } from './common/request-context.middleware';
 import { ConfigService } from './config/config.service';
+import { setupSwagger } from './swagger';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   app.useLogger(app.get(JsonLogger));
-  // cookie-parser 解析 Cookie 头，req.cookies 才能拿到 refresh token。
-  // 不签名、不加密，只是把 "a=1; b=2" 拆成对象 —— 内容安全靠 httpOnly + 服务端校验，不靠这个中间件。
-  app.use(cookieParser());
-  // 必须第一个挂：后面的拦截器和控制器都依赖它写入的 requestId
-  app.use(requestContextMiddleware);
-
-  // 业务接口统一挂在 /api/v1，探针留在根路径，方便网关直接探
-  app.setGlobalPrefix('api/v1', { exclude: ['health', 'health/ready'] });
+  // 中间件和全局前缀都在 app.setup 里，接口测试共用同一份，避免两边配置漂移
+  configureApp(app);
+  // 必须在 setGlobalPrefix 之后：文档要按最终路径生成
+  setupSwagger(app);
   app.enableShutdownHooks();
 
   const config = app.get(ConfigService);
   const port = config.get('API_PORT');
   await app.listen(port, '0.0.0.0');
 
-  new Logger('Bootstrap').log(`API 已启动：http://localhost:${port}/api/v1  探针：/health /health/ready`);
+  new Logger('Bootstrap').log(
+    `API 已启动：http://localhost:${port}/api/v1  文档：http://localhost:${port}/api-docs  探针：/health /health/ready`,
+  );
 }
 
 bootstrap().catch((error: unknown) => {
