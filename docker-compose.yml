@@ -42,6 +42,9 @@ services:
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-604800}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # 带凭证的跨域必须逐个列出来源，不能用 *。线上要写成真实域名，
+      # 否则从 https://域名 打开的前端拿不到响应。
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-deepseek-chat}
@@ -54,7 +57,10 @@ services:
       UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-10485760}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
-      - "${API_HOST_PORT:-4000}:4000"
+      # 只绑回环：外部流量必须经过 Nginx 的 443，不能绕过它直连后端。
+      # 不写 127.0.0.1 的话 Docker 会绑到 0.0.0.0，等于给后端留了个后门，
+      # 限流、审计、TLS 全部可以被跳过。
+      - "127.0.0.1:${API_HOST_PORT:-4000}:4000"
     volumes:
       - uploads:/data/uploads
     healthcheck:

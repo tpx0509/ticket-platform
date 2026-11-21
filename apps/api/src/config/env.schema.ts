@@ -38,6 +38,11 @@ export const envSchema = z
     COOKIE_DOMAIN: z.string().default('localhost'),
     COOKIE_SECURE: boolFromEnv(false),
 
+    // 允许跨域的前端地址，逗号分隔。带凭证的跨域请求不能用 '*' 通配，
+    // 必须逐个列出来。默认值只覆盖本地开发，线上要显式写成真实域名。
+    CORS_ORIGINS: z
+      .preprocess(emptyToUndefined, z.string().default('http://localhost:5173,http://127.0.0.1:5173')),
+
     LLM_BASE_URL: z.string().regex(/^https?:\/\/\S+$/, '必须是 http(s) 地址'),
     LLM_API_KEY: z.string().optional(),
     LLM_CHAT_MODEL: z.string().default('deepseek-chat'),

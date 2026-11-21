@@ -11,7 +11,30 @@ import { requestContextMiddleware } from './common/request-context.middleware';
  * 结果就是「线上 401、测试 404」—— 因为测试里的路由没挂 /api/v1 前缀。
  * 两边调同一个函数，才不会各配各的。
  */
-export function configureApp(app: INestApplication): void {
+export interface AppSetupOptions {
+  /**
+   * 允许跨域的前端地址。由调用方从环境变量解析后传进来，
+   * 不传时用本地开发默认值（接口测试跑的就是这个场景）。
+   */
+  corsOrigins?: string[];
+}
+
+const DEFAULT_CORS_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+
+export function configureApp(app: INestApplication, options: AppSetupOptions = {}): void {
+  /**
+   * 反向代理支持。Express 默认把 TCP 直连的地址当作客户端 IP，
+   * 部署到 Nginx 后面之后，每个请求都来自 127.0.0.1 —— 后果是
+   * rate-limit.guard.ts 把所有用户算成同一个人（共用一个限流桶），
+   * 登录日志里记录的 IP 也全是本机，出事时无法追溯。
+   *
+   * 必须设成数字 1（只信任最近一跳），不能设 true：
+   * true 表示信任整条 X-Forwarded-For 链，客户端可以自己伪造这个头、
+   * 声称自己是任意 IP，按 IP 限流就形同虚设。
+   */
+  const express = app.getHttpAdapter().getInstance() as { set?: (key: string, value: unknown) => void };
+  express.set?.('trust proxy', 1);
+
   /**
    * CORS 必须在所有中间件之前生效 —— Nest 内部会把它挂在最前面，
    * 这样浏览器的 OPTIONS 预检能直接被它接住并回 204，
@@ -19,7 +42,7 @@ export function configureApp(app: INestApplication): void {
    *
    * credentials: true 时 origin 不能用 '*'：浏览器规定带凭证的请求
    * 必须明确知道「是哪一个源被允许」，通配符会被直接拒绝。
-   * 因此这里列两个开发地址，部署时换成真实域名。
+   * 所以地址从环境变量 CORS_ORIGINS 读：本地是 5173，线上是真实域名。
    *
    * exposedHeaders 是最容易漏的一步：跨域下 JS 默认只能读 6 个
    * 「简单响应头」，Content-Disposition（下载文件名）、
@@ -27,7 +50,7 @@ export function configureApp(app: INestApplication): void {
    * 否则代码里 res.headers.get() 拿到的是 null，且不报任何错。
    */
   app.enableCors({
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    origin: options.corsOrigins ?? DEFAULT_CORS_ORIGINS,
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     // 自定义头会触发预检，不在这个列表里的头会让整个请求失败

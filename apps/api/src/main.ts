@@ -13,13 +13,22 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   app.useLogger(app.get(JsonLogger));
-  // 中间件和全局前缀都在 app.setup 里，接口测试共用同一份，避免两边配置漂移
-  configureApp(app);
+
+  const config = app.get(ConfigService);
+
+  // 中间件和全局前缀都在 app.setup 里，接口测试共用同一份，避免两边配置漂移。
+  // 跨域地址来自环境变量：线上必须放真实域名，否则浏览器会拦掉带凭证的请求。
+  configureApp(app, {
+    corsOrigins: config
+      .get('CORS_ORIGINS')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean),
+  });
   // 必须在 setGlobalPrefix 之后：文档要按最终路径生成
   setupSwagger(app);
   app.enableShutdownHooks();
 
-  const config = app.get(ConfigService);
   const port = config.get('API_PORT');
   await app.listen(port, '0.0.0.0');
 
