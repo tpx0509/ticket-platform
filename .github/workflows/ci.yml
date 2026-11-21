@@ -93,8 +93,14 @@ jobs:
       - name: 确保 psql 可用
         run: command -v psql || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
 
+      # psql（libpq）不认识 Prisma 的私有查询参数：直接把带 ?schema=public 的 URI
+      # 交给它会报 `invalid URI query parameter: "schema"`，exit code 2。
+      # 所以先把查询串剥掉再传 —— 同一个连接串，两种客户端各取所需。
+      # DATABASE_URL_MIGRATE 本身不改：Prisma 那边的 schema 语义要保持。
       - name: 设置应用角色密码
-        run: psql "$DATABASE_URL_MIGRATE" -v ON_ERROR_STOP=1 -c "alter role ticket_app with login password '$APP_DB_PASSWORD';"
+        run: |
+          DB_URL="$(printf '%s' "$DATABASE_URL_MIGRATE" | cut -d'?' -f1)"
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "alter role ticket_app with login password '$APP_DB_PASSWORD';"
 
       # 接口测试断言的对象是 seed 出来的 3 个组织、7 个用户
       - name: 灌测试数据
