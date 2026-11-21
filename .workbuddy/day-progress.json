@@ -1,5 +1,5 @@
 {
-  "last_completed": 16,
+  "last_completed": 17,
   "days": {
     "2": {
       "date": "2026-11-03",
@@ -105,6 +105,12 @@
       "title": "Linux 与服务器",
       "commits": ["666aed8"],
       "wallpaper": "day-17.png"
+    },
+    "17": {
+      "date": "2026-11-21",
+      "title": "Nginx + HTTPS + CI/CD",
+      "commits": ["88870ba", "23a1fcb", "d3583dc", "27f8a28", "d10999c", "db87c5e", "7acd10e"],
+      "wallpaper": "day-18.png"
     }
   }
 }
