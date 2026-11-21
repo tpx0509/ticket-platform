@@ -5,7 +5,8 @@
 # 端口分工：
 #   API_HOST_PORT  应用映射到宿主机的端口，默认 4000。
 #                  和宿主机上 pnpm api:dev 使用的 API_PORT(4800) 分开，避免抢端口。
-#   POSTGRES_PORT / REDIS_PORT  保留原有映射，方便宿主机的 psql、redis-cli 直连排查。
+#   POSTGRES_PORT / REDIS_PORT  只绑定 127.0.0.1：宿主机仍能用 psql、redis-cli 直连排查，
+#                  公网连不进来。部署到服务器时这两个端口绝不能被防火墙放通。
 name: ticket-platform
 
 services:
@@ -105,7 +106,9 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
       TZ: Asia/Shanghai
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # 只绑回环地址：宿主机能用 psql 排查，公网连不进来。
+      # 容器之间走服务名 postgres:5432，不经过宿主机端口这一层。
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # 只在数据卷为空时执行，用于装扩展、建只读角色
@@ -130,7 +133,8 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      # 同上：只给本机的 redis-cli 用，不对公网开放
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:

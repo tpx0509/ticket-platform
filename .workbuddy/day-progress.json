@@ -1,5 +1,5 @@
 {
-  "last_completed": 11,
+  "last_completed": 15,
   "days": {
     "2": {
       "date": "2026-11-03",
@@ -75,6 +75,30 @@
       "title": "鉴权（上）",
       "commits": ["cbdd813", "eda456b", "fe2e89a"],
       "wallpaper": "day-12.png"
+    },
+    "12": {
+      "date": "2026-11-19",
+      "title": "鉴权（下）",
+      "commits": [],
+      "wallpaper": null
+    },
+    "13": {
+      "date": "2026-11-19",
+      "title": "工程细节",
+      "commits": ["714656d", "74671d1", "170a37c"],
+      "wallpaper": null
+    },
+    "14": {
+      "date": "2026-11-20",
+      "title": "测试与文档",
+      "commits": ["741db27", "3f46046", "1fa82f0", "4a76168"],
+      "wallpaper": null
+    },
+    "15": {
+      "date": "2026-11-20",
+      "title": "Docker",
+      "commits": ["08619e6"],
+      "wallpaper": "day-16.png"
     }
   }
 }
