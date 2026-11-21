@@ -106,6 +106,20 @@ pnpm db:psql                  # 验证连通
 pnpm api:dev                  # API 跑在 4800，改代码即时重载
 ```
 
+## 部署与 CI/CD
+
+推送到 `master` 后自动完成：类型检查与测试 → 构建镜像推 `ghcr.io` → SSH 到服务器拉新镜像重建容器。
+
+```
+.github/workflows/ci.yml     PR 与复用的验证流水线（起 Postgres/Redis 服务容器，跑迁移、seed、测试）
+.github/workflows/deploy.yml 构建两个镜像并部署
+docker-compose.prod.yml      生产覆盖层：镜像从 ghcr 拉，不在服务器上构建
+```
+
+服务器上通过 `.env` 里的 `COMPOSE_FILE` 固定加载覆盖层，日常仍然用 `docker compose ps / logs` 这类短命令，不用每次带两个 `-f`。
+
+需要在仓库 Settings → Secrets and variables → Actions 里配三个 secret：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`（私钥全文）。
+
 ## 环境变量
 
 全部通过根目录 `.env` 注入，代码中不出现任何硬编码连接串或密钥。字段说明见 `.env.example`。

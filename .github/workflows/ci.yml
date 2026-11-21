@@ -1,0 +1,107 @@
+name: CI
+
+# 两种触发方式：
+#   pull_request  —— 提 PR 时先跑一遍，红了就别合
+#   workflow_call —— 被 deploy.yml 复用，push 到 master 时由它调用
+# 不直接监听 push：否则 push 一次会跑两遍（CI 一遍、Deploy 里再一遍）。
+on:
+  pull_request:
+    branches: [master]
+  workflow_call:
+
+concurrency:
+  # 同一个 PR 连推两次，取消前一次，省 runner 时间
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# 这些值写死而不放 secrets：CI 里的库是一次性的，用完即销毁，没有保密价值。
+# 写死的好处是日志里能看清到底用了什么，本地照着敲也能复现。
+env:
+  DATABASE_URL: postgresql://ticket_app:ci_app_pw@localhost:5432/ticket_test?schema=public&connection_limit=10
+  DATABASE_URL_MIGRATE: postgresql://ticket:ci_owner_pw@localhost:5432/ticket_test?schema=public
+  APP_DB_PASSWORD: ci_app_pw
+  REDIS_URL: redis://localhost:6379/0
+  # 校验要求 >= 32 字符。CI 里没有真实用户，用固定值即可。
+  JWT_ACCESS_SECRET: ci_only_access_secret_0123456789abcdef
+  JWT_REFRESH_SECRET: ci_only_refresh_secret_0123456789abcdef
+  LLM_BASE_URL: https://api.deepseek.com/v1
+  LOG_LEVEL: error
+
+jobs:
+  verify:
+    name: 类型检查与测试
+    runs-on: ubuntu-24.04
+
+    # 接口测试连的是真库真 Redis，不是 mock。
+    # services 里的容器和 job 共享同一个网络命名空间，所以 localhost:5432 直接可用。
+    services:
+      postgres:
+        # 和 compose 里同一个镜像：迁移要用 vector 类型，普通 postgres 镜像会报错
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ticket
+          POSTGRES_PASSWORD: ci_owner_pw
+          POSTGRES_DB: ticket_test
+          POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
+        ports:
+          - 5432:5432
+        # 不健康检查的话，job 会在数据库还没接受连接时就开始跑迁移，偶尔红一次很难复盘
+        options: >-
+          --health-cmd "pg_isready -U ticket -d ticket_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 版本必须和 package.json 的 packageManager 一致，
+      # 否则 pnpm 会按自己缓存里的版本装依赖，lockfile 校验失败
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --frozen-lockfile：lockfile 和 package.json 不一致就直接失败，
+      # 避免「本地能跑、CI 也能跑、但装的版本不是同一批」
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 生成物不进版本库（.gitignore 里有 **/generated/prisma/），必须自己生成
+      - name: 生成 Prisma Client
+        run: pnpm --filter @ticket/api prisma:generate
+
+      # 用 deploy 而不是 dev：只应用已有迁移，不会因为 schema 有差异就凭空生成新迁移
+      - name: 建表
+        run: pnpm --filter @ticket/api exec prisma migrate deploy
+
+      # 迁移里只写了 alter role ticket_app login，密码故意留在外部注入。
+      # 测试连库用的正是这个受限角色（RLS 才能生效），没有密码连不上。
+      - name: 确保 psql 可用
+        run: command -v psql || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
+
+      - name: 设置应用角色密码
+        run: psql "$DATABASE_URL_MIGRATE" -v ON_ERROR_STOP=1 -c "alter role ticket_app with login password '$APP_DB_PASSWORD';"
+
+      # 接口测试断言的对象是 seed 出来的 3 个组织、7 个用户
+      - name: 灌测试数据
+        run: pnpm --filter @ticket/api db:seed
+
+      - name: 类型检查
+        run: pnpm --filter @ticket/api typecheck
+
+      - name: 测试
+        run: pnpm --filter @ticket/api test

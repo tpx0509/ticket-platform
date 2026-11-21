@@ -1,0 +1,105 @@
+name: Deploy
+
+# 只在 master 上触发。PR 由 ci.yml 管，不部署。
+# workflow_dispatch 用来手动重跑（比如回滚后重新部署同一版本）。
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  # 同一时刻只允许一个部署在跑，但不要取消正在进行的那个 ——
+  # 部署做到一半被打断，服务器可能停在「镜像拉了、容器没起」的中间态。
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  # 复用 ci.yml：测试不过，后面两个 job 一个都不会启动
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: 构建镜像并推送
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # 推 ghcr 需要这个权限，用内置 GITHUB_TOKEN 就够，不必另建 PAT
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # buildx 才能用 gha 缓存后端：层缓存存在 GitHub 的缓存服务里，
+      # 下一次构建直接复用 pnpm install 那层，不用重装几百个包
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 两个 target 共用一个 Dockerfile，各自打包。
+      # :sha 用于精确回溯和回滚，:latest 只是方便人肉看「现在线上是哪个」。
+      - name: 构建并推送 API 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runner
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ticket-platform-api:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/ticket-platform-api:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: 构建并推送迁移镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: migrate
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ticket-platform-migrate:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/ticket-platform-migrate:latest
+          cache-from: type=gha,scope=migrate
+          cache-to: type=gha,mode=max,scope=migrate
+
+  deploy:
+    name: 部署到服务器
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: SSH 拉取新镜像并重建容器
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/ticket-platform
+
+            # 拉最新的 compose 文件和 nginx 配置。--ff-only：有本地改动就失败，
+            # 而不是悄悄生成一个 merge commit，服务器上不该有「本地提交」这种东西。
+            git pull --ff-only
+
+            # 把版本号写进 .env，compose 里 image 的 tag 就读它。
+            # 用 sha 而不是 latest：容器 recreate 的判断依据是镜像名变了，
+            # 一直用 latest 的话新版本可能不会触发重建。
+            if grep -q '^IMAGE_TAG=' .env; then
+              sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${{ github.sha }}|" .env
+            else
+              echo "IMAGE_TAG=${{ github.sha }}" >> .env
+            fi
+
+            # 先 pull 再 up：镜像没拉到就 up，compose 会尝试用本地已有的旧镜像起容器
+            docker compose pull
+            docker compose up -d
+
+            # 干净的老镜像会留一堆 tag，migrate 镜像 1.7G，半个月就能吃满磁盘。
+            # 只清 7 天前的，留出回滚窗口。
+            docker image prune -f
+            docker image prune -a -f --filter "until=168h" || true
+
+            docker compose ps

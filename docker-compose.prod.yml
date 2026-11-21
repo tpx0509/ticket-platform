@@ -1,0 +1,16 @@
+# 生产覆盖层：必须和 docker-compose.yml 一起用，单独跑不起来（缺 postgres/redis 定义）。
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# 服务器上通过 .env 里的 COMPOSE_FILE 固定住，日常仍然敲 `docker compose ps` 这种短命令。
+#
+# 只做一件事：把 app / migrate 的镜像从「本地构建」换成「从镜像仓库拉」。
+# compose 不支持删除字段，所以 base 里的 build: 段还在 —— 但只要不传 --build，
+# up 就不会去构建，pull 拉的是这里指定的 image。
+
+services:
+  app:
+    image: ghcr.io/${IMAGE_OWNER:-tpx0509}/ticket-platform-api:${IMAGE_TAG:-latest}
+
+  migrate:
+    image: ghcr.io/${IMAGE_OWNER:-tpx0509}/ticket-platform-migrate:${IMAGE_TAG:-latest}
