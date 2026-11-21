@@ -12,10 +12,10 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
  */
 export function setupSwagger(app: INestApplication): void {
   const config = new DocumentBuilder()
-    .setTitle('工单平台 API')
+    .setTitle('工单平台 API文档')
     .setDescription(
       [
-        '多租户工单系统。所有接口前缀 /api/v1。',
+        '多租户工单系统。所有接口前缀 /api/v1',
         '',
         '鉴权：先调 POST /auth/login 拿 accessToken，点右上角 Authorize 填进去。',
         '',
