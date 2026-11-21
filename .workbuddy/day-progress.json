@@ -1,5 +1,5 @@
 {
-  "last_completed": 15,
+  "last_completed": 16,
   "days": {
     "2": {
       "date": "2026-11-03",
@@ -99,6 +99,12 @@
       "title": "Docker",
       "commits": ["08619e6"],
       "wallpaper": "day-16.png"
+    },
+    "16": {
+      "date": "2026-11-21",
+      "title": "Linux 与服务器",
+      "commits": ["666aed8"],
+      "wallpaper": "day-17.png"
     }
   }
 }
