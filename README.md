@@ -129,6 +129,35 @@ https://api.xin2win.top/api/v1 接口（Nginx 反代到 127.0.0.1:4000）
 
 需要在仓库 Settings → Secrets and variables → Actions 里配三个 secret：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`（私钥全文）。
 
+## 日志与运维
+
+日志有两份，分工不同：
+
+```
+容器 stdout  → /var/lib/docker/containers/<id>/*-json.log   上限 10m × 5，docker compose logs 查
+应用文件     → ~/ticket-platform/logs/app.log               宿主机挂载，logrotate 按天切，留 14 天
+```
+
+两份都是应用的同一次输出（`JsonLogger` 双写），区别在于**谁能轮转它**。Docker 那份的句柄握在 dockerd 手里，logrotate 用 `copytruncate` 会把正在写的半行 JSON 截断，用默认的 `create` 模式又会让 dockerd 继续往改名后的旧文件写。所以按天归档只能针对应用自己打开的文件。
+
+```
+infra/backup/pg-backup.sh     每日 pg_dump -Fc，含完整性校验、7 天滚动清理
+infra/logrotate/ticket-app    应用日志按天归档
+```
+
+安装（服务器上执行一次）：
+
+```bash
+sudo cp infra/logrotate/ticket-app /etc/logrotate.d/ticket-app
+sudo logrotate -d /etc/logrotate.d/ticket-app     # 干跑，只打印不执行
+sudo logrotate -f /etc/logrotate.d/ticket-app     # 立即切一次，验证
+
+( crontab -l 2>/dev/null | grep -v 'pg-backup.sh'; \
+  echo '17 3 * * * /home/ubuntu/ticket-platform/infra/backup/pg-backup.sh >> /var/backups/ticket/backup.log 2>&1' ) | crontab -
+```
+
+备份目录 `/var/backups/ticket` 权限 `700`、dump 文件 `600`：里面是全库明文数据。**备份和数据库在同一块盘上**，当前只能防误删和迁移出错，防不了磁盘损坏——异地存储留待后续。
+
 ## 环境变量
 
 全部通过根目录 `.env` 注入，代码中不出现任何硬编码连接串或密钥。字段说明见 `.env.example`。

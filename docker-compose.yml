@@ -9,6 +9,22 @@
 #                  公网连不进来。部署到服务器时这两个端口绝不能被防火墙放通。
 name: ticket-platform
 
+# 容器日志的兜底上限，三个服务共用。
+#
+# 不配的话 json-file driver 会无限增长：容器起来三个月，那个文件就能吃掉
+# 几十 G，最后的表现是「整个网站突然 500，磁盘 100%」—— 排查起来还很绕，
+# 因为应用本身没报错，是写日志写不进去了。
+#
+# 10m × 5 = 每个容器最多 50MB，超了自动滚掉最旧的。这是「防止撑爆」，不负责
+# 按天归档 —— 按天的那份由应用自己写文件 + 宿主机 logrotate 完成。
+#
+# x- 开头是 compose 的扩展字段，不会被当成服务；& 定义锚点，下面用 * 引用。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   # ---------------------------------------------------------------- 应用
   app:
@@ -19,6 +35,7 @@ services:
     image: ticket-platform-api:local
     container_name: td-api
     restart: unless-stopped
+    logging: *default-logging
     # 迁移没成功就不启动：宁可起不来，也不要拿半迁移的库对外提供服务
     depends_on:
       migrate:
@@ -56,6 +73,10 @@ services:
       STORAGE_LOCAL_DIR: /data/uploads
       UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-10485760}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # 除了 stdout 再落一份文件到挂载出来的目录，宿主机 logrotate 按天切它。
+      # 只写 stdout 的话日志被 Docker 收在 json 文件里，那个文件没法按天轮转
+      # （见 infra/logrotate/ticket-app 里的说明）。
+      LOG_FILE: /app/logs/app.log
     ports:
       # 只绑回环：外部流量必须经过 Nginx 的 443，不能绕过它直连后端。
       # 不写 127.0.0.1 的话 Docker 会绑到 0.0.0.0，等于给后端留了个后门，
@@ -63,6 +84,10 @@ services:
       - "127.0.0.1:${API_HOST_PORT:-4000}:4000"
     volumes:
       - uploads:/data/uploads
+      # 绑定挂载而不是命名卷：宿主机上的 logrotate 要能直接看到这个文件。
+      # 容器内 node 用户 uid=1000，宿主机 ubuntu 也是 1000，属主天然对齐；
+      # 对不齐时应用只会降级为仅 stdout，不会起不来。
+      - ./logs:/app/logs
     healthcheck:
       # 用就绪探针而不是存活探针：DB 或 Redis 不通时容器显示 unhealthy，
       # 而不是「进程活着所以一切正常」。
@@ -102,6 +127,7 @@ services:
     image: pgvector/pgvector:pg16
     container_name: td-postgres
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ticket}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devlocal123}
@@ -139,6 +165,7 @@ services:
     image: redis:7-alpine
     container_name: td-redis
     restart: unless-stopped
+    logging: *default-logging
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
     ports:
       # 同上：只给本机的 redis-cli 用，不对公网开放

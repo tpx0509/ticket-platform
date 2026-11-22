@@ -1,0 +1,42 @@
+# 应用日志按天归档。
+#
+# 切的是 /home/ubuntu/ticket-platform/logs/app.log —— 应用自己写的那一份，
+# 不是 Docker 的 json 日志。为什么不能用 logrotate 切 Docker 那份：
+#
+#   Docker 日志在 /var/lib/docker/containers/<id>/<id>-json.log，文件句柄握在
+#   dockerd 手里。用 copytruncate 会把正在写的半行 JSON 截断，产生解析不了的
+#   坏行；用默认的 create 模式，dockerd 仍然往改名后的旧 inode 写，新的那份
+#   永远是空的。所以归档只能针对应用自己打开的文件。
+#
+# 安装：sudo cp infra/logrotate/ticket-app /etc/logrotate.d/ticket-app
+# 检查：sudo logrotate -d /etc/logrotate.d/ticket-app   （干跑，只打印不执行）
+# 强制：sudo logrotate -f /etc/logrotate.d/ticket-app   （立即切一次，用于验证）
+
+/home/ubuntu/ticket-platform/logs/app.log {
+    # 每天一份。实际触发时间由系统的 logrotate.timer 决定（通常在凌晨）。
+    daily
+    # 留 14 天，第 15 天的最旧一份自动删除
+    rotate 14
+
+    # 归档名带日期：app.log-20261122，压缩后 app.log-20261122.gz
+    dateext
+    dateformat -%Y%m%d
+
+    # 复制走再清空原文件，应用不需要重开句柄。
+    # 这里能安全使用，是因为应用用 O_APPEND 打开文件 —— 清空之后下一次写
+    # 落在文件末尾（也就是 0），不会在开头留出一段填满 \0 的空洞。
+    copytruncate
+
+    # 最近一份先不压缩：出事时直接 grep 就能看，不用先 gunzip
+    delaycompress
+    compress
+
+    # 文件不存在不算错误（容器没起、日志还没生成）
+    missingok
+    # 空文件不轮转，避免攒一堆 0 字节的 .gz
+    notifempty
+
+    # logrotate 以 root 运行。不写这行的话，轮转出来的新 app.log 属主是 root:root，
+    # 应用容器里的 node（uid 1000）写不进去，日志从第二天起就断了。
+    su ubuntu ubuntu
+}

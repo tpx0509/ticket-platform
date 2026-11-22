@@ -56,6 +56,9 @@ export const envSchema = z
     UPLOAD_MAX_BYTES: intFromEnv(10 * 1024 * 1024, 1),
 
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
+    // 可选：配了就同时写一份到这个文件，不配则只写 stdout。
+    // 容器里由 compose 注入 /app/logs/app.log，宿主机 logrotate 切的就是它。
+    LOG_FILE: z.preprocess(emptyToUndefined, z.string().optional()),
     SENTRY_DSN: z.string().optional(),
   })
   .superRefine((value, ctx) => {
