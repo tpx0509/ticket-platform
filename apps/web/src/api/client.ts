@@ -99,7 +99,10 @@ export interface RequestOptions {
 }
 
 function buildUrl(path: string, query?: Query): string {
-  const url = new URL(BASE + path)
+  // 第二个参数不能省：生产环境 BASE 是相对路径 `/api/v1`，
+  // 单参数的 new URL('/api/v1/tickets') 会抛 "Failed to construct 'URL': Invalid URL"，
+  // 表现为点登录后页面顶部弹红条、请求根本没发出去。
+  const url = new URL(BASE + path, window.location.origin)
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value === undefined || value === null || value === '') continue
