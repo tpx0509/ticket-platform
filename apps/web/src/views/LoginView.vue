@@ -16,10 +16,12 @@ const loading = ref(false)
 const errorText = ref('')
 const requestId = ref('')
 
-// 预填一个能用的账号，省得每次查 seed 文件
+// 预填一个能用的账号，省得每次查 seed 文件。
+// 必须是 seed.ts 里真实存在的邮箱 —— 之前这里填的是 test-1117@example.com，
+// 那个地址 seed 根本没建（只是早期手写的占位值），照着填必然 401。
 const form = reactive({
-  email: 'test-1117@example.com',
-  password: 'secret123',
+  email: 'user01@example.com',
+  password: 'DevPassw0rd!',
 })
 
 const rules: FormRules = {
@@ -107,8 +109,8 @@ async function submit(): Promise<void> {
 
         <div class="hint">
           <div class="hint-title">可用账号</div>
-          <div><code>test-1117@example.com</code> / <code>secret123</code> — 云启 agent</div>
           <div><code>user01@example.com</code> / <code>DevPassw0rd!</code> — 云启 owner</div>
+          <div><code>user03@example.com</code> / <code>DevPassw0rd!</code> — 云启 agent</div>
         </div>
       </div>
     </section>

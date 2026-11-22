@@ -108,15 +108,24 @@ pnpm api:dev                  # API 跑在 4800，改代码即时重载
 
 ## 部署与 CI/CD
 
-推送到 `master` 后自动完成：类型检查与测试 → 构建镜像推 `ghcr.io` → SSH 到服务器拉新镜像重建容器。
+推送到 `master` 后自动完成：类型检查与测试 → 构建镜像推 `ghcr.io` → SSH 到服务器拉新镜像重建容器 → 构建前端并传到宿主机 → 公网冒烟。
 
 ```
 .github/workflows/ci.yml     PR 与复用的验证流水线（起 Postgres/Redis 服务容器，跑迁移、seed、测试）
-.github/workflows/deploy.yml 构建两个镜像并部署
+.github/workflows/deploy.yml 构建镜像 + 构建前端 + 部署
 docker-compose.prod.yml      生产覆盖层：镜像从 ghcr 拉，不在服务器上构建
 ```
 
-服务器上通过 `.env` 里的 `COMPOSE_FILE` 固定加载覆盖层，日常仍然用 `docker compose ps / logs` 这类短命令，不用每次带两个 `-f`。
+前端**不进 Docker**：`vite build` 的产物是纯静态文件，由 `deploy.yml` 里的 `web` job 直接传到服务器 `/var/www/ticket-web`，宿主机 Nginx 从那儿读。少一层容器、少一次镜像 pull。
+
+线上结构：
+
+```
+https://xin2win.top            前端静态文件（history 路由回落到 index.html）
+https://api.xin2win.top/api/v1 接口（Nginx 反代到 127.0.0.1:4000）
+```
+
+两个域各用同一张证书（`--expand` 把 `api` 加进 SAN），不需要分别续期。服务器上通过 `.env` 里的 `COMPOSE_FILE` 固定加载覆盖层，日常仍然用 `docker compose ps / logs` 这类短命令，不用每次带两个 `-f`。
 
 需要在仓库 Settings → Secrets and variables → Actions 里配三个 secret：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`（私钥全文）。
 

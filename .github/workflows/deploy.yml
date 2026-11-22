@@ -65,9 +65,56 @@ jobs:
           cache-from: type=gha,scope=migrate
           cache-to: type=gha,mode=max,scope=migrate
 
+  # 前端是纯静态文件，不进镜像：Node 构建完直接传到宿主机目录，Nginx 从
+  # /var/www/ticket-web 读。塞进镜像是多一次 pull、多一个容器，没有任何收益。
+  #
+  # 和 build 并行跑：两者互不依赖，前端传上去时 API 还是旧版，但接口契约没变，
+  # 不会有中间态问题。Deploy 里 needs 两个都写上，任何一个红了都不部署。
+  web:
+    name: 构建前端并上线
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          # 缓存 pnpm 全局 store：命中时省掉下载几百个包的时间
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # 不用传 VITE_API_BASE —— 生产默认值写死在 client.ts 里（api.xin2win.top）。
+      # 参数化反而多一个「忘了传」的坑，这个项目只有一个环境。
+      - run: pnpm --filter @ticket/web build
+
+      # 先摊平到 artifact/ 再传，让 strip_components 只剥一层。
+      # 直接传 apps/web/dist/* 得剥三层，数字改错文件就落到奇怪的地方。
+      - name: 整理上传目录
+        run: |
+          mkdir -p artifact
+          cp -r apps/web/dist/. artifact/
+
+      - name: 传到服务器
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "artifact/*"
+          target: "/var/www/ticket-web"
+          strip_components: 1
+          # index.html 每次都叫同一个名字，不覆盖等于没更新
+          overwrite: true
+
   deploy:
     name: 部署到服务器
-    needs: build
+    needs: [build, web]
     runs-on: ubuntu-24.04
     steps:
       - name: SSH 拉取新镜像并重建容器
@@ -103,3 +150,19 @@ jobs:
             docker image prune -a -f --filter "until=168h" || true
 
             docker compose ps
+
+            # 冒烟：容器起来 ≠ 能接流量（探针 404、证书不对、Nginx 没 reload 都会 502）。
+            # 从公网打一次真实域名，比只看 compose ps 有意义。
+            # 重建瞬间可能有短暂 502，所以重试而不是一次判死。
+            ok=0
+            for i in 1 2 3 4 5; do
+              if curl -fsS --max-time 5 https://api.xin2win.top/api/v1/health/ready; then
+                ok=1
+                break
+              fi
+              sleep 3
+            done
+            if [ "$ok" != "1" ]; then
+              echo "冒烟失败：/api/v1/health/ready 连续 5 次不通"
+              exit 1
+            fi
