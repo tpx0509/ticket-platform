@@ -1,6 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 
+import { API_PREFIX } from './common/api-prefix';
 import { requestContextMiddleware } from './common/request-context.middleware';
 
 /**
@@ -65,6 +66,8 @@ export function configureApp(app: INestApplication, options: AppSetupOptions = {
   // 必须第一个挂：后面的拦截器和控制器都依赖它写入的 requestId
   app.use(requestContextMiddleware);
 
-  // 业务接口统一挂在 /api/v1，探针留在根路径，方便网关直接探
-  app.setGlobalPrefix('api/v1', { exclude: ['health', 'health/ready'] });
+  // 所有接口统一挂在 /api/v1，探针和 Swagger 也不例外。
+  // 这样 Nginx 侧只需要一条 `location /api/` 反代规则就能覆盖全部后端路由，
+  // 不必为 /health 单独开 location —— 少一处配置就少一处和生产环境不一致的可能。
+  app.setGlobalPrefix(API_PREFIX);
 }

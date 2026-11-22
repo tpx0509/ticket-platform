@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
+import { API_PREFIX } from './common/api-prefix';
 import { JsonLogger } from './common/json-logger';
 import { ConfigService } from './config/config.service';
 import { setupSwagger } from './swagger';
@@ -33,7 +34,9 @@ async function bootstrap(): Promise<void> {
   await app.listen(port, '0.0.0.0');
 
   new Logger('Bootstrap').log(
-    `API 已启动：http://localhost:${port}/api/v1  文档：http://localhost:${port}/api-docs  探针：/health /health/ready`,
+    `API 已启动：http://localhost:${port}/${API_PREFIX}  ` +
+      `文档：http://localhost:${port}/${API_PREFIX}/docs  ` +
+      `探针：/${API_PREFIX}/health /${API_PREFIX}/health/ready`,
   );
 }
 

@@ -10,7 +10,17 @@
  * 而 refresh token 是轮换的，第二次必然用旧的、直接失败。
  */
 
-const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:4800/api/v1'
+/**
+ * 接口基址的取值顺序：环境变量 > 生产构建默认 > 开发默认。
+ *
+ * 生产用相对路径 `/api/v1`，和页面同源 —— 浏览器不做跨域预检，
+ * refresh_token 那个 SameSite=Lax 的 cookie 才能正常带上。
+ * 这里写死默认值而不是只靠构建命令传 VITE_API_BASE：
+ * 少传一次环境变量，线上包就会退回 localhost:4800，页面直接白屏。
+ */
+const BASE =
+  (import.meta.env.VITE_API_BASE as string | undefined) ??
+  (import.meta.env.PROD ? '/api/v1' : 'http://localhost:4800/api/v1')
 
 /**
  * 开发期最容易踩的一个坑，提前喊一声。
@@ -22,7 +32,9 @@ const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://lo
  * 表现为「刷新页面直接跳登录」，光看代码完全猜不到。
  */
 if (import.meta.env.DEV && typeof window !== 'undefined') {
-  const apiHost = new URL(BASE).hostname
+  // 第二个参数 base 不能省：线上 VITE_API_BASE 是相对路径 `/api/v1`，
+  // 单参数的 new URL('/api/v1') 会抛 Invalid URL，整页白屏。
+  const apiHost = new URL(BASE, window.location.origin).hostname
   if (apiHost !== window.location.hostname) {
     console.warn(
       `[auth] 页面域名是 ${window.location.hostname}，接口域名是 ${apiHost}，两者不是同一个站点，` +

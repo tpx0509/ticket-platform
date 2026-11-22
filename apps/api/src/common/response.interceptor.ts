@@ -7,6 +7,8 @@ import {
 import type { Request } from 'express';
 import { type Observable, map } from 'rxjs';
 
+import { HEALTH_PATH_PREFIX } from './api-prefix';
+
 export interface SuccessEnvelope<T> {
   data: T;
   meta: { requestId: string; traceId: string };
@@ -21,7 +23,7 @@ export class ResponseInterceptor<T> implements NestInterceptor<T, SuccessEnvelop
   intercept(context: ExecutionContext, next: CallHandler<T>): Observable<SuccessEnvelope<T> | T> {
     const http = context.switchToHttp();
     const request = http.getRequest<Request>();
-    if (request.path.startsWith('/health')) return next.handle();
+    if (request.path.startsWith(HEALTH_PATH_PREFIX)) return next.handle();
 
     return next.handle().pipe(
       map((data) => {

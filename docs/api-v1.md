@@ -347,10 +347,12 @@ data: {"messageId":"uuid","usage":{"promptTokens":1200,"completionTokens":180}}
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/health` | 进程存活，永远返回 200 |
-| GET | `/health/ready` | 依赖可用（数据库、Redis）。任一不可用返回 503 |
+| GET | `/api/v1/health` | 进程存活，永远返回 200 |
+| GET | `/api/v1/health/ready` | 依赖可用（数据库、Redis）。任一不可用返回 503 |
 
-两个分开：`/health` 给负载均衡判断是否需要重启进程，`/health/ready` 给流量调度判断是否该接请求。混用会导致依赖抖一下就重启整个服务。
+两个分开：`/api/v1/health` 给负载均衡判断是否需要重启进程，`/api/v1/health/ready` 给流量调度判断是否该接请求。混用会导致依赖抖一下就重启整个服务。
+
+探针也挂在 `/api/v1` 下，和后端其他路由保持同一个前缀——Nginx 侧只需要一条 `/api/` 反代规则，不必为探针单独开规则（少一处配置就少一处和生产不一致的可能）。
 
 ---
 

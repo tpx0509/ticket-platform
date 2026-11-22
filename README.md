@@ -90,10 +90,10 @@ ticket-platform/
 ```bash
 cp .env.example .env          # 首次
 docker compose up -d --build
-curl http://localhost:4000/health/ready
+curl http://localhost:4000/api/v1/health/ready
 ```
 
-API 文档 `http://localhost:4000/api-docs`，首次启动自动建管理员（账号见 `.env` 的 `BOOTSTRAP_ADMIN_*`）。详见 [开发环境搭建](docs/dev-setup.md) 第七节。
+API 文档 `http://localhost:4000/api/v1/docs`，首次启动自动建管理员（账号见 `.env` 的 `BOOTSTRAP_ADMIN_*`）。详见 [开发环境搭建](docs/dev-setup.md) 第七节。
 
 ### 开发模式（宿主机热重载）
 

@@ -153,8 +153,8 @@ docker compose up -d --build
 
 ```powershell
 docker compose ps                                  # app 应为 (healthy)
-curl http://localhost:4000/health/ready            # database / cache 都是 ok
-# 浏览器打开 http://localhost:4000/api-docs
+curl http://localhost:4000/api/v1/health/ready     # database / cache 都是 ok
+# 浏览器打开 http://localhost:4000/api/v1/docs
 ```
 
 首次启动会自动建一个管理员，账号密码取 `.env` 里的 `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD`（默认 `admin@yunqi.local` / `DevOnly123456`）。库里已经有组织时这步会跳过，不会覆盖任何数据。

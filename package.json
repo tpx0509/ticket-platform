@@ -31,7 +31,7 @@
     "web:dev": "pnpm --filter @ticket/web dev",
     "web:build": "pnpm --filter @ticket/web build",
     "web:typecheck": "pnpm --filter @ticket/web typecheck",
-    "web:openapi": "curl -s http://localhost:4800/api-docs-json -o apps/web/openapi.json && pnpm --filter @ticket/web openapi",
+    "web:openapi": "curl -s http://localhost:4800/api/v1/docs-json -o apps/web/openapi.json && pnpm --filter @ticket/web openapi",
     "prisma:generate": "pnpm --filter @ticket/api prisma:generate",
     "db:migrate": "pnpm --filter @ticket/api prisma:migrate",
     "db:seed": "pnpm --filter @ticket/api db:seed",

@@ -1,8 +1,14 @@
 import type { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
+import { API_PREFIX } from './common/api-prefix';
+
 /**
- * OpenAPI 文档，挂在 /api-docs。
+ * OpenAPI 文档，挂在 /api/v1/docs。
+ *
+ * 放在 /api/ 前缀内部而不是根路径，是为了让 Nginx 只用一条 `location /api/`
+ * 就覆盖全部后端路由（业务接口、探针、文档，含 Swagger UI 自己的 js/css）。
+ * 根路径留给前端静态文件，两边边界清晰。
  *
  * 只在 main.ts 里调用，不进 configureApp —— 接口测试不需要 UI，
  * 少起一个路由也少一分干扰。
@@ -33,7 +39,9 @@ export function setupSwagger(app: INestApplication): void {
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api-docs', app, document, {
+  // 第二个参数是 UI 的挂载路径，同时决定 JSON 地址：<path>-json
+  // 也就是 /api/v1/docs-json，前端导出 schema 用的就是它。
+  SwaggerModule.setup(`${API_PREFIX}/docs`, app, document, {
     swaggerOptions: {
       // 刷新页面后保持登录态，调接口时不用反复粘贴 token
       persistAuthorization: true,

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
+import { HEALTH_PATH_PREFIX } from './api-prefix';
 import { AppError, type ErrorCode, type FieldError } from '../common/error-codes';
 
 interface ErrorBody {
@@ -55,7 +56,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     // 探针只关心状态码和是哪个依赖挂了，不套业务信封
-    if (request.path.startsWith('/health')) {
+    if (request.path.startsWith(HEALTH_PATH_PREFIX)) {
       const detail = exception instanceof HttpException ? exception.getResponse() : undefined;
       response
         .status(status)

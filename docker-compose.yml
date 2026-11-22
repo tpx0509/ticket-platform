@@ -65,8 +65,10 @@ services:
       - uploads:/data/uploads
     healthcheck:
       # 用就绪探针而不是存活探针：DB 或 Redis 不通时容器显示 unhealthy，
-      # 而不是「进程活着所以一切正常」
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health/ready >/dev/null || exit 1"]
+      # 而不是「进程活着所以一切正常」。
+      # 路径必须和代码里的全局前缀一致（apps/api/src/common/api-prefix.ts）：
+      # 改前缀忘了改这里，容器会永远 unhealthy，depends_on 会把 app 卡在启动前。
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/api/v1/health/ready >/dev/null || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 6
