@@ -13,14 +13,17 @@
 /**
  * 接口基址的取值顺序：环境变量 > 生产构建默认 > 开发默认。
  *
- * 生产用相对路径 `/api/v1`，和页面同源 —— 浏览器不做跨域预检，
- * refresh_token 那个 SameSite=Lax 的 cookie 才能正常带上。
+ * 生产走独立子域 `api.xin2win.top`，所以是**跨源**请求：浏览器会发 CORS 预检，
+ * 后端 CORS_ORIGINS 必须含页面地址，否则登录能成、后续请求全被拦。
+ * cookie 不受影响 —— refresh_token 是 host-only 绑在 api 子域上，
+ * 而 SameSite=Lax 判的是「同注册域」，子域算同站。
+ *
  * 这里写死默认值而不是只靠构建命令传 VITE_API_BASE：
  * 少传一次环境变量，线上包就会退回 localhost:4800，页面直接白屏。
  */
 const BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ??
-  (import.meta.env.PROD ? '/api/v1' : 'http://localhost:4800/api/v1')
+  (import.meta.env.PROD ? 'https://api.xin2win.top/api/v1' : 'http://localhost:4800/api/v1')
 
 /**
  * 开发期最容易踩的一个坑，提前喊一声。
@@ -32,8 +35,9 @@ const BASE =
  * 表现为「刷新页面直接跳登录」，光看代码完全猜不到。
  */
 if (import.meta.env.DEV && typeof window !== 'undefined') {
-  // 第二个参数 base 不能省：线上 VITE_API_BASE 是相对路径 `/api/v1`，
-  // 单参数的 new URL('/api/v1') 会抛 Invalid URL，整页白屏。
+  // 第二个参数 base 不能省：BASE 允许被配成相对路径（比如本地把
+  // VITE_API_BASE 设成 `/api/v1`），单参数的 new URL('/api/v1') 会抛
+  // Invalid URL，整页白屏。
   const apiHost = new URL(BASE, window.location.origin).hostname
   if (apiHost !== window.location.hostname) {
     console.warn(
